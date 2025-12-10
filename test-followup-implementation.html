@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Follow-up Template Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .debug { background: #f0f0f0; padding: 10px; margin: 10px 0; border-radius: 5px; }
+        .success { background: #d4edda; color: #155724; padding: 10px; margin: 10px 0; border-radius: 5px; }
+        .error { background: #f8d7da; color: #721c24; padding: 10px; margin: 10px 0; border-radius: 5px; }
+        button { padding: 10px 20px; margin: 5px; cursor: pointer; }
+        select { padding: 5px; margin: 5px; }
+    </style>
+</head>
+<body>
+    <h1>🧪 Follow-up Template Implementation Test</h1>
+    
+    <div class="debug">
+        <h3>Debug Information</h3>
+        <div id="debug-info">Loading...</div>
+    </div>
+    
+    <div>
+        <h3>Test Actions</h3>
+        <button onclick="initializeTemplates()">Initialize Templates</button>
+        <button onclick="loadTemplates()">Load Templates</button>
+        <button onclick="clearTemplates()">Clear Templates</button>
+        <button onclick="testFollowupFilter()">Test Follow-up Filter</button>
+    </div>
+    
+    <div>
+        <h3>Follow-up Template Selection</h3>
+        <label>Follow-up Template: </label>
+        <select id="followup-select">
+            <option value="">Select a template...</option>
+        </select>
+        <div id="selected-template-info"></div>
+    </div>
+    
+    <div id="results"></div>
+
+    <script>
+        // Simulate the template management functions
+        const TEMPLATES_STORAGE_KEY = 'mailskrap_templates';
+        
+        function getStoredTemplates(userId) {
+            const templates = localStorage.getItem(TEMPLATES_STORAGE_KEY);
+            const allTemplates = templates ? JSON.parse(templates) : [];
+            return allTemplates.filter(template => template.user_id === userId);
+        }
+        
+        function saveTemplate(template) {
+            const allTemplates = localStorage.getItem(TEMPLATES_STORAGE_KEY);
+            const templates = allTemplates ? JSON.parse(allTemplates) : [];
+            
+            const newTemplate = {
+                ...template,
+                id: templates.length + 1,
+                lastModified: new Date().toISOString().split('T')[0]
+            };
+            
+            templates.push(newTemplate);
+            localStorage.setItem(TEMPLATES_STORAGE_KEY, JSON.stringify(templates));
+            return newTemplate;
+        }
+        
+        function initializeDefaultTemplates(userId) {
+            console.log('🔄 Initializing default templates for user:', userId);
+            const existingTemplates = getStoredTemplates(userId);
+            console.log('📦 Existing templates found:', existingTemplates.length);
+            
+            if (existingTemplates.length === 0) {
+                console.log('📝 No existing templates, creating defaults...');
+                const defaultTemplates = [
+                    {
+                        user_id: userId,
+                        name: 'Welcome Email',
+                        subject: 'Welcome to {Company}! Let\'s get started',
+                        category: 'Welcome',
+                        template_type: 'marketing',
+                        sequence: 1,
+                        content: '<h2>Hi {Name},</h2><p>Welcome to our service!</p>',
+                        contentType: 'html',
+                        variables: ['Name', 'Company'],
+                        performance: { opens: '28%', clicks: '4.5%', replies: '2.1%' }
+                    },
+                    {
+                        user_id: userId,
+                        name: 'Follow-up Email',
+                        subject: 'Did you see our previous email?',
+                        category: 'Follow-up',
+                        template_type: 'followup',
+                        sequence: 2,
+                        content: '<h2>Following up on our previous email</h2><p>Hi {FirstName},</p><p>I wanted to follow up on the email I sent you earlier.</p>',
+                        contentType: 'html',
+                        variables: ['FirstName'],
+                        performance: { opens: '22%', clicks: '3.2%', replies: '1.8%' }
+                    },
+                    {
+                        user_id: userId,
+                        name: 'Newsletter Template',
+                        subject: 'Monthly Newsletter - {Date}',
+                        category: 'Newsletter',
+                        template_type: 'newsletter',
+                        sequence: 1,
+                        content: '<h1>Monthly Newsletter</h1><p>Hi {Name},</p><p>Here are the latest updates.</p>',
+                        contentType: 'html',
+                        variables: ['Name', 'Company', 'Date'],
+                        performance: { opens: '35%', clicks: '8.2%', replies: '0.5%' }
+                    }
+                ];
+                
+                defaultTemplates.forEach(template => {
+                    console.log('💾 Saving template:', template.name, 'Type:', template.template_type);
+                    saveTemplate(template);
+                });
+                console.log('✅ Default templates created successfully');
+                return true;
+            } else {
+                console.log('✅ Templates already exist, skipping initialization');
+                return false;
+            }
+        }
+        
+        function initializeTemplates() {
+            const result = initializeDefaultTemplates(1);
+            addResult(result ? 'Templates initialized successfully!' : 'Templates already exist', 'success');
+            loadTemplates();
+        }
+        
+        function loadTemplates() {
+            const templates = getStoredTemplates(1);
+            updateDebugInfo(templates);
+            updateFollowupSelect(templates);
+            addResult(`Loaded ${templates.length} templates`, 'success');
+        }
+        
+        function clearTemplates() {
+            localStorage.removeItem(TEMPLATES_STORAGE_KEY);
+            addResult('Templates cleared', 'success');
+            loadTemplates();
+        }
+        
+        function testFollowupFilter() {
+            const templates = getStoredTemplates(1);
+            const filteredTemplates = templates.filter(t => t.template_type === 'followup' || t.template_type === 'marketing');
+            addResult(`Follow-up filter test: ${filteredTemplates.length} templates found (${filteredTemplates.map(t => t.name).join(', ')})`, 'success');
+        }
+        
+        function updateDebugInfo(templates) {
+            const debugInfo = document.getElementById('debug-info');
+            debugInfo.innerHTML = `
+                <p><strong>Total Templates:</strong> ${templates.length}</p>
+                <p><strong>Follow-up Templates:</strong> ${templates.filter(t => t.template_type === 'followup').length}</p>
+                <p><strong>Marketing Templates:</strong> ${templates.filter(t => t.template_type === 'marketing').length}</p>
+                <p><strong>Newsletter Templates:</strong> ${templates.filter(t => t.template_type === 'newsletter').length}</p>
+                <p><strong>Template Types:</strong> ${[...new Set(templates.map(t => t.template_type))].join(', ')}</p>
+                <p><strong>Template Names:</strong> ${templates.map(t => `${t.name} (${t.template_type})`).join(', ')}</p>
+            `;
+        }
+        
+        function updateFollowupSelect(templates) {
+            const select = document.getElementById('followup-select');
+            const filteredTemplates = templates.filter(t => t.template_type === 'followup' || t.template_type === 'marketing');
+            
+            // Clear existing options
+            select.innerHTML = '<option value="">Select a template...</option>';
+            
+            // Add filtered templates
+            filteredTemplates.forEach(template => {
+                const option = document.createElement('option');
+                option.value = template.id;
+                option.textContent = `${template.name} (${template.template_type})`;
+                select.appendChild(option);
+            });
+            
+            // Add change listener
+            select.onchange = function() {
+                const selectedId = this.value;
+                const selectedTemplate = templates.find(t => t.id.toString() === selectedId);
+                const infoDiv = document.getElementById('selected-template-info');
+                
+                if (selectedTemplate) {
+                    infoDiv.innerHTML = `
+                        <div class="success">
+                            <p><strong>Selected:</strong> ${selectedTemplate.name}</p>
+                            <p><strong>Type:</strong> ${selectedTemplate.template_type}</p>
+                            <p><strong>Subject:</strong> ${selectedTemplate.subject}</p>
+                            <p><strong>Content Preview:</strong> ${selectedTemplate.content.substring(0, 100)}...</p>
+                        </div>
+                    `;
+                } else {
+                    infoDiv.innerHTML = '';
+                }
+            };
+        }
+        
+        function addResult(message, type) {
+            const resultsDiv = document.getElementById('results');
+            const div = document.createElement('div');
+            div.className = type;
+            div.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            resultsDiv.appendChild(div);
+        }
+        
+        // Initialize on page load
+        window.onload = function() {
+            loadTemplates();
+        };
+    </script>
+</body>
+</html>
