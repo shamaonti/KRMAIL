@@ -11,6 +11,8 @@ const emailRoutes = require('./routes/email');
 const campaignRoutes = require('./routes/campaigns');
 const followupService = require('./services/followupService');
 
+// ✅ NEW: Leads routes
+const leadsRoutes = require('./routes/leads');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -69,6 +71,8 @@ app.use('/api/email', emailRoutes);
 app.use('/api/campaigns', campaignRoutes);
 app.use('/api/auth', authRoutes);
 
+// ✅ NEW: Leads API
+app.use('/api/leads', leadsRoutes);
 
 // 404 handler
 app.use('*', (req, res) => {
@@ -82,10 +86,10 @@ app.use('*', (req, res) => {
 // Global error handler
 app.use((err, req, res, next) => {
   console.error('Global error handler:', err);
-  
+
   const statusCode = err.statusCode || 500;
   const message = err.message || 'Internal Server Error';
-  
+
   res.status(statusCode).json({
     error: message,
     ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
@@ -98,7 +102,7 @@ app.listen(PORT, () => {
   console.log(`📧 SMTP Server: ${process.env.SMTP_HOST}:${process.env.SMTP_PORT}`);
   console.log(`🌍 Environment: ${process.env.NODE_ENV}`);
   console.log(`🔗 Health check: http://localhost:${PORT}/health`);
-  
+
   // Start follow-up email processor
   followupService.startProcessor();
 });
