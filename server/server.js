@@ -9,6 +9,7 @@ require('dotenv').config({ path: './config.env' });
 
 const emailRoutes = require('./routes/email');
 const campaignRoutes = require('./routes/campaigns');
+const leadRoutes = require('./routes/leads'); // ADD THIS LINE
 const followupService = require('./services/followupService');
 
 
@@ -68,6 +69,7 @@ app.get('/health', (req, res) => {
 app.use('/api/email', emailRoutes);
 app.use('/api/campaigns', campaignRoutes);
 app.use('/api/auth', authRoutes);
+app.use('/api', leadRoutes);
 
 
 // 404 handler
