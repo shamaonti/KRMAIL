@@ -4,6 +4,7 @@ const helmet = require('helmet');
 const compression = require('compression');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
+const session = require('express-session');
 require('dotenv').config({ path: './config.env' });
 
 // Routes
@@ -11,6 +12,8 @@ const authRoutes = require('./routes/auth');
 const emailRoutes = require('./routes/email');
 const campaignRoutes = require('./routes/campaigns');
 const leadsRoutes = require('./routes/leads');
+const emailCampRoutes = require('./routes/emailcamp');
+const followupService = require('./services/followupService');
 
 // Services
 const followupService = require('./services/followupService');
@@ -35,7 +38,18 @@ app.use(
   })
 );
 
-app.options('*', cors());
+/* ✅ SESSION MIDDLEWARE (CRITICAL FIX) */
+app.use(session({
+  name: 'marketskrap.sid',
+  secret: process.env.SESSION_SECRET || 'marketskrap_secret',
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    httpOnly: true,
+    secure: false,       // localhost only
+    sameSite: 'lax'
+  }
+}));
 
 /* ---------------- MIDDLEWARE ---------------- */
 app.use(compression());
@@ -68,6 +82,10 @@ app.use('/api/auth', authRoutes);
 app.use('/api/email', emailRoutes);
 app.use('/api/campaigns', campaignRoutes);
 app.use('/api/leads', leadsRoutes);
+app.use('/api/auth', authRoutes);
+app.use('/api/email', emailRoutes);
+app.use('/api/campaigns', campaignRoutes);
+app.use('/api/emailcamp', emailCampRoutes);
 
 /* ---------------- 404 HANDLER ---------------- */
 app.use((req, res) => {
