@@ -1,204 +1,201 @@
+// server/routes/leads.js
 const express = require("express");
 const router = express.Router();
 const db = require("../db");
 
-const multer = require("multer");
-const { parse } = require("csv-parse/sync");
-
-// upload config (memory)
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
-});
-
-// helper: safe CSV value
-function toStr(v) {
-  if (v === null || v === undefined) return "";
-  return String(v).trim();
+// mysql2/promise -> [rows, fields]
+async function q(sql, params = []) {
+  const [rows] = await db.query(sql, params);
+  return rows;
 }
 
-// helper: CSV escape
-function csvEscape(v) {
-  const s = toStr(v);
-  if (s.includes('"') || s.includes(",") || s.includes("\n") || s.includes("\r")) {
-    return `"${s.replace(/"/g, '""')}"`;
+function splitNameFromEmail(email = "") {
+  const local = String(email).split("@")[0] || "";
+  const cleaned = local.replace(/[._-]+/g, " ").trim();
+  if (!cleaned) return { first_name: "Unknown", last_name: "" };
+  const parts = cleaned.split(/\s+/).filter(Boolean);
+  const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : "");
+  return { first_name: cap(parts[0]) || "Unknown", last_name: cap(parts.slice(1).join(" ")) || "" };
+}
+
+function normTags(tags) {
+  if (Array.isArray(tags)) return tags.map(String).map(t => t.trim()).filter(Boolean).join(", ");
+  if (typeof tags === "string") return tags.trim();
+  return "";
+}
+
+function normalizeLead(raw = {}) {
+  const email = String(raw.email || "").trim().toLowerCase();
+  let first_name = String(raw.first_name ?? raw.firstName ?? "").trim();
+  let last_name = String(raw.last_name ?? raw.lastName ?? "").trim();
+
+  if (!first_name || first_name.toLowerCase() === "unknown") {
+    const gen = splitNameFromEmail(email);
+    first_name = gen.first_name;
+    if (!last_name) last_name = gen.last_name;
   }
-  return s;
+
+  return {
+    email,
+    first_name,
+    last_name,
+    company: String(raw.company || "").trim(),
+    status: String(raw.status || "New").trim(),
+    engagement: String(raw.engagement || "").trim(),
+    score: Number.isFinite(Number(raw.score)) ? Number(raw.score) : 0,
+    tags: normTags(raw.tags),
+  };
 }
+
+function sendDbError(res, where, err) {
+  console.error(`❌ ${where}:`, err);
+  return res.status(500).json({
+    message: where,
+    error: err?.message || String(err),
+    code: err?.code,
+  });
+}
+
+// ✅ Health check
+router.get("/health", (req, res) => res.json({ ok: true }));
 
 // ✅ GET all leads
 router.get("/", async (req, res) => {
   try {
-    const [rows] = await db.query("SELECT * FROM leads ORDER BY created_at DESC");
-    res.json(rows);
+    const rows = await q("SELECT * FROM leads ORDER BY id DESC");
+    return res.json(rows);
   } catch (err) {
-    console.error("Fetch leads error:", err);
-    res.status(500).json({ error: "Failed to fetch leads" });
+    return sendDbError(res, "Failed to fetch leads", err);
   }
 });
 
-// ✅ ADD a new lead
+// ✅ GET one lead
+router.get("/:id", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const rows = await q("SELECT * FROM leads WHERE id = ? LIMIT 1", [id]);
+    if (!rows.length) return res.status(404).json({ message: "Lead not found" });
+    return res.json(rows[0]);
+  } catch (err) {
+    return sendDbError(res, "Failed to fetch lead", err);
+  }
+});
+
+// ✅ CREATE lead
 router.post("/", async (req, res) => {
   try {
-    const {
-      email,
-      first_name = "",
-      last_name = "",
-      company = "",
-      status = "Cold",
-      engagement = "Low",
-      score = 0,
-      tags = "",
-    } = req.body;
+    const lead = normalizeLead(req.body);
+    if (!lead.email) return res.status(400).json({ message: "Email is required" });
 
-    if (!email) {
-      return res.status(400).json({ error: "email is required" });
-    }
+    const dup = await q("SELECT id FROM leads WHERE email = ? LIMIT 1", [lead.email]);
+    if (dup.length) return res.status(409).json({ message: "Email already exists" });
 
-    const [result] = await db.query(
-      `INSERT INTO leads 
-       (email, first_name, last_name, company, status, engagement, score, tags)
+    const result = await db.query(
+      `INSERT INTO leads (email, first_name, last_name, company, status, engagement, score, tags)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        email,
-        first_name,
-        last_name,
-        company,
-        status,
-        engagement,
-        Number(score) || 0,
-        tags,
-      ]
+      [lead.email, lead.first_name, lead.last_name, lead.company, lead.status, lead.engagement, lead.score, lead.tags]
     );
 
-    const [rows] = await db.query("SELECT * FROM leads WHERE id = ?", [
-      result.insertId,
-    ]);
-
-    res.status(201).json(rows[0]);
+    const insertId = Array.isArray(result) ? result[0]?.insertId : result?.insertId;
+    return res.status(201).json({ message: "Lead created", id: insertId });
   } catch (err) {
-    if (err.code === "ER_DUP_ENTRY") {
-      return res
-        .status(409)
-        .json({ error: "Lead with this email already exists" });
-    }
-    console.error("Add lead error:", err);
-    res.status(500).json({ error: "Failed to add lead" });
+    return sendDbError(res, "Failed to create lead", err);
   }
 });
 
-// ✅ EXPORT CSV  (GET /api/leads/export)
-router.get("/export", async (req, res) => {
+// ✅ UPDATE lead
+router.put("/:id", async (req, res) => {
   try {
-    const [rows] = await db.query(
-      `SELECT id, email, first_name, last_name, company, status, engagement, score, tags, created_at
-       FROM leads
-       ORDER BY created_at DESC`
-    );
+    const id = Number(req.params.id);
+    const lead = normalizeLead(req.body);
 
-    const header = [
-      "Email",
-      "First Name",
-      "Last Name",
-      "Company",
-      "Status",
-      "Engagement",
-      "Score",
-      "Tags",
-      "Created At",
-    ];
-
-    const lines = [];
-    lines.push(header.join(","));
-
-    for (const r of rows) {
-      lines.push(
-        [
-          csvEscape(r.email),
-          csvEscape(r.first_name),
-          csvEscape(r.last_name),
-          csvEscape(r.company),
-          csvEscape(r.status),
-          csvEscape(r.engagement),
-          csvEscape(r.score),
-          csvEscape(r.tags),
-          csvEscape(r.created_at),
-        ].join(",")
-      );
+    if (lead.email) {
+      const dup = await q("SELECT id FROM leads WHERE email = ? AND id <> ? LIMIT 1", [lead.email, id]);
+      if (dup.length) return res.status(409).json({ message: "Email already exists" });
     }
 
-    const csv = lines.join("\n");
+    await q(
+      `UPDATE leads
+       SET email = COALESCE(?, email),
+           first_name = ?,
+           last_name = ?,
+           company = ?,
+           status = ?,
+           engagement = ?,
+           score = ?,
+           tags = ?
+       WHERE id = ?`,
+      [lead.email || null, lead.first_name, lead.last_name, lead.company, lead.status, lead.engagement, lead.score, lead.tags, id]
+    );
 
-    res.setHeader("Content-Type", "text/csv; charset=utf-8");
-    res.setHeader("Content-Disposition", `attachment; filename="leads.csv"`);
-    res.status(200).send(csv);
+    return res.json({ message: "Lead updated" });
   } catch (err) {
-    console.error("Export CSV error:", err);
-    res.status(500).json({ error: "Failed to export leads" });
+    return sendDbError(res, "Failed to update lead", err);
   }
 });
 
-// ✅ IMPORT CSV (POST /api/leads/import)  (expects form-data key: file)
-router.post("/import", upload.single("file"), async (req, res) => {
+// ✅ DELETE lead
+router.delete("/:id", async (req, res) => {
   try {
-    if (!req.file) {
-      return res.status(400).json({ error: "CSV file is required" });
-    }
+    const id = Number(req.params.id);
+    await q("DELETE FROM leads WHERE id = ?", [id]);
+    return res.json({ message: "Lead deleted" });
+  } catch (err) {
+    return sendDbError(res, "Failed to delete lead", err);
+  }
+});
 
-    const csvText = req.file.buffer.toString("utf-8");
+// ✅ BULK IMPORT (skips duplicates)
+router.post("/bulk", async (req, res) => {
+  try {
+    const incoming = Array.isArray(req.body?.leads) ? req.body.leads : [];
+    if (!incoming.length) return res.status(400).json({ message: "No leads provided" });
 
-    const records = parse(csvText, {
-      columns: true,
-      skip_empty_lines: true,
-      bom: true,
-      trim: true,
-    });
+    const normalized = incoming.map(normalizeLead).filter(l => l.email);
+    if (!normalized.length) return res.status(400).json({ message: "No valid leads (email required)" });
 
-    let inserted = 0;
-    let skipped = 0;
-
-    // Insert ignoring duplicates (email must be UNIQUE in DB)
-    for (const row of records) {
-      // accept both styles of headers
-      const email =
-        toStr(row.email) || toStr(row.Email) || toStr(row["E-mail"]) || "";
-      const first_name = toStr(row.first_name) || toStr(row["First Name"]);
-      const last_name = toStr(row.last_name) || toStr(row["Last Name"]);
-      const company = toStr(row.company) || toStr(row.Company);
-
-      if (!email) {
-        skipped++;
-        continue;
+    // de-dupe inside CSV
+    const seen = new Set();
+    const unique = [];
+    for (const l of normalized) {
+      if (!seen.has(l.email)) {
+        seen.add(l.email);
+        unique.push(l);
       }
-
-      const status = toStr(row.status) || toStr(row.Status) || "Cold";
-      const engagement =
-        toStr(row.engagement) || toStr(row.Engagement) || "Low";
-      const scoreRaw = toStr(row.score) || toStr(row.Score) || "0";
-      const score = Number(scoreRaw) || 0;
-      const tags = toStr(row.tags) || toStr(row.Tags) || "";
-
-      // INSERT IGNORE = if duplicate email -> ignore (no crash)
-      const [result] = await db.query(
-        `INSERT IGNORE INTO leads
-         (email, first_name, last_name, company, status, engagement, score, tags)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [email, first_name, last_name, company, status, engagement, score, tags]
-      );
-
-      if (result.affectedRows === 1) inserted++;
-      else skipped++;
     }
 
-    res.json({
-      message: "Import completed",
-      inserted,
-      skipped,
-      total: records.length,
+    // skip existing in DB
+    const emails = unique.map(l => l.email);
+    const placeholders = emails.map(() => "?").join(",");
+    const existing = await q(`SELECT email FROM leads WHERE email IN (${placeholders})`, emails);
+    const existingSet = new Set(existing.map(r => String(r.email).toLowerCase()));
+
+    const toInsert = unique.filter(l => !existingSet.has(l.email));
+    if (!toInsert.length) {
+      return res.json({ message: "No new leads to import", inserted: 0, skipped: unique.length });
+    }
+
+    const values = [];
+    const rowsSql = toInsert
+      .map(l => {
+        values.push(l.email, l.first_name, l.last_name, l.company, l.status, l.engagement, l.score, l.tags);
+        return "(?, ?, ?, ?, ?, ?, ?, ?)";
+      })
+      .join(",");
+
+    await q(
+      `INSERT INTO leads (email, first_name, last_name, company, status, engagement, score, tags)
+       VALUES ${rowsSql}`,
+      values
+    );
+
+    return res.json({
+      message: "Bulk import success",
+      inserted: toInsert.length,
+      skipped: unique.length - toInsert.length,
     });
   } catch (err) {
-    console.error("Import CSV error:", err);
-    res.status(500).json({ error: "Failed to import CSV" });
+    return sendDbError(res, "Bulk import failed", err);
   }
 });
 

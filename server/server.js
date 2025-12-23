@@ -1,4 +1,3 @@
-const authRoutes = require('./routes/auth');
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -7,103 +6,94 @@ const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
 require('dotenv').config({ path: './config.env' });
 
+// Routes
+const authRoutes = require('./routes/auth');
 const emailRoutes = require('./routes/email');
 const campaignRoutes = require('./routes/campaigns');
-const followupService = require('./services/followupService');
-
-// ✅ NEW: Leads routes
 const leadsRoutes = require('./routes/leads');
+
+// Services
+const followupService = require('./services/followupService');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Security middleware
-app.use(helmet({
-  contentSecurityPolicy: false, // Disable for development
-}));
+/* ---------------- SECURITY ---------------- */
+app.use(
+  helmet({
+    contentSecurityPolicy: false, // dev friendly
+  })
+);
 
-// CORS configuration
-app.use(cors({
-  origin: ['http://localhost:8080', 'http://localhost:5173'],
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
-}));
+/* ---------------- CORS ---------------- */
+app.use(
+  cors({
+    origin: ['http://localhost:8080', 'http://localhost:5173'],
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+  })
+);
 
 app.options('*', cors());
 
-// Compression middleware
+/* ---------------- MIDDLEWARE ---------------- */
 app.use(compression());
+app.use(morgan('dev'));
 
-// Logging middleware
-app.use(morgan('combined'));
-
-// Rate limiting
 const limiter = rateLimit({
-  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000, // 15 minutes
-  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 100, // limit each IP to 100 requests per windowMs
-  message: {
-    error: 'Too many requests from this IP, please try again later.',
-    retryAfter: Math.ceil(parseInt(process.env.RATE_LIMIT_WINDOW_MS) / 1000 / 60)
-  },
+  windowMs: 15 * 60 * 1000,
+  max: 100,
   standardHeaders: true,
   legacyHeaders: false,
 });
 
-app.use('/api/', limiter);
+app.use('/api', limiter);
 
-// Body parsing middleware
 app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.urlencoded({ extended: true }));
 
-// Health check endpoint
+/* ---------------- HEALTH CHECK ---------------- */
 app.get('/health', (req, res) => {
-  res.status(200).json({
+  res.json({
     status: 'OK',
-    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development',
     uptime: process.uptime(),
-    environment: process.env.NODE_ENV
+    timestamp: new Date().toISOString(),
   });
 });
 
-// API routes
+/* ---------------- API ROUTES ---------------- */
+app.use('/api/auth', authRoutes);
 app.use('/api/email', emailRoutes);
 app.use('/api/campaigns', campaignRoutes);
-app.use('/api/auth', authRoutes);
-
-// ✅ NEW: Leads API
 app.use('/api/leads', leadsRoutes);
 
-// 404 handler
-app.use('*', (req, res) => {
+/* ---------------- 404 HANDLER ---------------- */
+app.use((req, res) => {
   res.status(404).json({
     error: 'Endpoint not found',
     path: req.originalUrl,
-    method: req.method
   });
 });
 
-// Global error handler
+/* ---------------- ERROR HANDLER ---------------- */
 app.use((err, req, res, next) => {
-  console.error('Global error handler:', err);
+  console.error('❌ Error:', err);
 
-  const statusCode = err.statusCode || 500;
-  const message = err.message || 'Internal Server Error';
-
-  res.status(statusCode).json({
-    error: message,
-    ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
+  res.status(err.statusCode || 500).json({
+    error: err.message || 'Internal Server Error',
+    ...(process.env.NODE_ENV === 'development' && { stack: err.stack }),
   });
 });
 
-// Start server
+/* ---------------- START SERVER ---------------- */
 app.listen(PORT, () => {
-  console.log(`🚀 MailSkrap Backend Server running on port ${PORT}`);
-  console.log(`📧 SMTP Server: ${process.env.SMTP_HOST}:${process.env.SMTP_PORT}`);
-  console.log(`🌍 Environment: ${process.env.NODE_ENV}`);
-  console.log(`🔗 Health check: http://localhost:${PORT}/health`);
+  console.log(`🚀 MailSkrap Backend running on port ${PORT}`);
+  console.log(`🗄️  DB: ${process.env.DB_NAME}`);
+  console.log(`🌍 Env: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`❤️  Health: http://localhost:${PORT}/health`);
 
-  // Start follow-up email processor
   followupService.startProcessor();
 });
 
