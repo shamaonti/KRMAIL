@@ -15,9 +15,6 @@ const leadsRoutes = require('./routes/leads');
 const emailCampRoutes = require('./routes/emailcamp');
 const followupService = require('./services/followupService');
 
-// Services
-const followupService = require('./services/followupService');
-
 const app = express();
 const PORT = process.env.PORT || 3001;
 
@@ -82,9 +79,6 @@ app.use('/api/auth', authRoutes);
 app.use('/api/email', emailRoutes);
 app.use('/api/campaigns', campaignRoutes);
 app.use('/api/leads', leadsRoutes);
-app.use('/api/auth', authRoutes);
-app.use('/api/email', emailRoutes);
-app.use('/api/campaigns', campaignRoutes);
 app.use('/api/emailcamp', emailCampRoutes);
 
 /* ---------------- 404 HANDLER ---------------- */
