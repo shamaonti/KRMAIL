@@ -19,10 +19,18 @@ import {
   Download,
   Upload,
   Star,
+import {
+  Search,
+  Filter,
+  Download,
+  Upload,
+  Star,
   Tag,
   MoreHorizontal,
   TrendingUp,
-  Eye
+  Eye,
+  Plus,
+  X
 } from "lucide-react";
 
 const LeadsPage = () => {
@@ -96,6 +104,8 @@ const LeadsPage = () => {
         return 'bg-green-100 text-green-800';
       case 'Cold Lead':
         return 'bg-blue-100 text-blue-800';
+      case 'New':
+        return 'bg-gray-100 text-gray-800';
       default:
         return 'bg-gray-100 text-gray-800';
     }
@@ -380,7 +390,7 @@ const LeadsPage = () => {
         </div>
       </header>
 
-      <main className="p-6">
+      <main className="p-6" style={{ pointerEvents: (isAddModalOpen || isImportModalOpen) ? 'none' : 'auto' }}>
         {/* Stats Cards */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
           <Card className="border border-gray-200 shadow-sm">
@@ -450,11 +460,17 @@ const LeadsPage = () => {
                 <Search className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
                 <Input
                   placeholder="Search leads by email, name, or company..."
+                <Input
+                  placeholder="Search leads by email, name, or company..."
                   className="pl-10"
                   value={searchText}
                   onChange={(e) => setSearchText(e.target.value)}
                 />
+                {searchQuery && debouncedSearchQuery !== searchQuery && (
+                  <span className="absolute right-3 top-3 text-xs text-gray-400">Searching...</span>
+                )}
               </div>
+
 
               <Select value={filterStatus} onValueChange={setFilterStatus}>
                 <SelectTrigger className="w-48">
@@ -462,21 +478,23 @@ const LeadsPage = () => {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Leads</SelectItem>
-                  <SelectItem value="hot">Hot Leads</SelectItem>
-                  <SelectItem value="replied">Replied</SelectItem>
-                  <SelectItem value="cold">Cold Leads</SelectItem>
+                  <SelectItem value="Hot Lead">Hot Leads</SelectItem>
+                  <SelectItem value="Replied">Replied</SelectItem>
+                  <SelectItem value="Cold Lead">Cold Leads</SelectItem>
+                  <SelectItem value="New">New</SelectItem>
                 </SelectContent>
               </Select>
 
-              <Select>
+              <Select value={filterEngagement} onValueChange={setFilterEngagement}>
                 <SelectTrigger className="w-48">
                   <SelectValue placeholder="Filter by engagement" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Engagement</SelectItem>
-                  <SelectItem value="high">High</SelectItem>
-                  <SelectItem value="medium">Medium</SelectItem>
-                  <SelectItem value="low">Low</SelectItem>
+                  <SelectItem value="High">High</SelectItem>
+                  <SelectItem value="Medium">Medium</SelectItem>
+                  <SelectItem value="Low">Low</SelectItem>
+                  <SelectItem value="None">None</SelectItem>
                 </SelectContent>
               </Select>
 
@@ -495,7 +513,7 @@ const LeadsPage = () => {
                   <Tag className="mr-2 h-4 w-4" />
                   Add Tag
                 </Button>
-                <Button size="sm" variant="outline" className="border-gray-300">
+                <Button size="sm" variant="outline" className="border-gray-300" onClick={handleExportSelected}>
                   Export Selected
                 </Button>
               </div>
@@ -545,6 +563,7 @@ const LeadsPage = () => {
                   <TableRow key={lead.id} className="border-b border-gray-100 hover:bg-gray-50">
                     <TableCell>
                       <Checkbox
+                      <Checkbox
                         checked={selectedLeads.includes(lead.id)}
                         onCheckedChange={(checked) => {
                           if (checked) {
@@ -583,6 +602,8 @@ const LeadsPage = () => {
                     <TableCell>
                       <div className="flex items-center space-x-2">
                         <div className="w-12 bg-gray-200 rounded-full h-2">
+                          <div
+                            className="bg-blue-600 h-2 rounded-full"
                           <div
                             className="bg-blue-600 h-2 rounded-full"
                             style={{ width: `${lead.score}%` }}
