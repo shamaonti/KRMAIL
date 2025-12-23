@@ -1,105 +1,63 @@
-const authRoutes = require('./routes/auth');
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const compression = require('compression');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
+const session = require('express-session');
 require('dotenv').config({ path: './config.env' });
 
+const authRoutes = require('./routes/auth');
 const emailRoutes = require('./routes/email');
 const campaignRoutes = require('./routes/campaigns');
+const emailCampRoutes = require('./routes/emailcamp');
 const followupService = require('./services/followupService');
-
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Security middleware
-app.use(helmet({
-  contentSecurityPolicy: false, // Disable for development
-}));
+app.use(helmet({ contentSecurityPolicy: false }));
 
-// CORS configuration
 app.use(cors({
   origin: ['http://localhost:8080', 'http://localhost:5173'],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
-app.options('*', cors());
+/* ✅ SESSION MIDDLEWARE (CRITICAL FIX) */
+app.use(session({
+  name: 'marketskrap.sid',
+  secret: process.env.SESSION_SECRET || 'marketskrap_secret',
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    httpOnly: true,
+    secure: false,       // localhost only
+    sameSite: 'lax'
+  }
+}));
 
-// Compression middleware
-app.use(compression());
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true }));
 
-// Logging middleware
-app.use(morgan('combined'));
-
-// Rate limiting
 const limiter = rateLimit({
-  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000, // 15 minutes
-  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 100, // limit each IP to 100 requests per windowMs
-  message: {
-    error: 'Too many requests from this IP, please try again later.',
-    retryAfter: Math.ceil(parseInt(process.env.RATE_LIMIT_WINDOW_MS) / 1000 / 60)
-  },
-  standardHeaders: true,
-  legacyHeaders: false,
+  windowMs: 15 * 60 * 1000,
+  max: 100
 });
-
 app.use('/api/', limiter);
 
-// Body parsing middleware
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-
-// Health check endpoint
 app.get('/health', (req, res) => {
-  res.status(200).json({
-    status: 'OK',
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-    environment: process.env.NODE_ENV
-  });
+  res.json({ status: 'OK' });
 });
 
-// API routes
+app.use('/api/auth', authRoutes);
 app.use('/api/email', emailRoutes);
 app.use('/api/campaigns', campaignRoutes);
-app.use('/api/auth', authRoutes);
+app.use('/api/emailcamp', emailCampRoutes);
 
-
-// 404 handler
-app.use('*', (req, res) => {
-  res.status(404).json({
-    error: 'Endpoint not found',
-    path: req.originalUrl,
-    method: req.method
-  });
-});
-
-// Global error handler
-app.use((err, req, res, next) => {
-  console.error('Global error handler:', err);
-  
-  const statusCode = err.statusCode || 500;
-  const message = err.message || 'Internal Server Error';
-  
-  res.status(statusCode).json({
-    error: message,
-    ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
-  });
-});
-
-// Start server
 app.listen(PORT, () => {
-  console.log(`🚀 MailSkrap Backend Server running on port ${PORT}`);
-  console.log(`📧 SMTP Server: ${process.env.SMTP_HOST}:${process.env.SMTP_PORT}`);
-  console.log(`🌍 Environment: ${process.env.NODE_ENV}`);
-  console.log(`🔗 Health check: http://localhost:${PORT}/health`);
-  
-  // Start follow-up email processor
+  console.log(`🚀 Server running on port ${PORT}`);
   followupService.startProcessor();
 });
 
