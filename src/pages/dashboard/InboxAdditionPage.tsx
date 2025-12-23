@@ -13,12 +13,15 @@ const InboxAdditionPage = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [messagesPerDay, setMessagesPerDay] = useState([50]);
   const [timeBetweenEmails, setTimeBetweenEmails] = useState([10]);
-  const [connectionStatus, setConnectionStatus] = useState(null);
+  const [connectionStatus, setConnectionStatus] = useState<string | null>(null);
   const [isTestingConnection, setIsTestingConnection] = useState(false);
+
+  // ✅ State for Select values
+  const [smtpSecurity, setSmtpSecurity] = useState('none');
+  const [imapSecurity, setImapSecurity] = useState('none');
 
   const testConnection = async () => {
     setIsTestingConnection(true);
-    // Simulate API call
     setTimeout(() => {
       setConnectionStatus('success');
       setIsTestingConnection(false);
@@ -102,7 +105,7 @@ const InboxAdditionPage = () => {
 
                 <div className="space-y-2">
                   <Label>Security</Label>
-                  <Select>
+                  <Select value={smtpSecurity} onValueChange={setSmtpSecurity}>
                     <SelectTrigger>
                       <SelectValue placeholder="Select security type" />
                     </SelectTrigger>
@@ -155,7 +158,7 @@ const InboxAdditionPage = () => {
 
                 <div className="space-y-2">
                   <Label>IMAP Security</Label>
-                  <Select>
+                  <Select value={imapSecurity} onValueChange={setImapSecurity}>
                     <SelectTrigger>
                       <SelectValue placeholder="Select security type" />
                     </SelectTrigger>
@@ -167,7 +170,6 @@ const InboxAdditionPage = () => {
                   </Select>
                 </div>
 
-                {/* Connection Status */}
                 {connectionStatus && (
                   <div className={`p-3 rounded-lg flex items-center space-x-2 ${
                     connectionStatus === 'success' ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'
@@ -247,11 +249,79 @@ const InboxAdditionPage = () => {
             </CardContent>
           </Card>
 
+          {/* Buttons */}
           <div className="flex justify-end space-x-3 mt-6">
             <Button variant="outline" className="border-gray-300">Cancel</Button>
-            <Button className="text-white font-medium" style={{ backgroundColor: '#1e3a8a' }}>
-              Save Email Account
-            </Button>
+
+            <Button
+  className="text-white font-medium"
+  style={{ backgroundColor: '#1e3a8a' }}
+  onClick={async () => {
+    try {
+      // 1️⃣ Get User ID from LocalStorage (Saved during login)
+      const storedUser = localStorage.getItem('user');
+      if (!storedUser) {
+        alert('Unauthorized: No login data found. Please log in again.');
+        return;
+      }
+      
+      const user = JSON.parse(storedUser);
+      const userId = user.id; // This is the ID from your 'users' table
+
+      // 2️⃣ Collect Form Data
+      const fromName = (document.getElementById('from-name') as HTMLInputElement).value;
+      const fromEmail = (document.getElementById('from-email') as HTMLInputElement).value;
+      const smtpUsername = (document.getElementById('smtp-username') as HTMLInputElement).value;
+      const smtpPassword = (document.getElementById('smtp-password') as HTMLInputElement).value;
+      const smtpHost = (document.getElementById('smtp-host') as HTMLInputElement).value;
+      const smtpPort = (document.getElementById('smtp-port') as HTMLInputElement).value;
+      const replyTo = (document.getElementById('reply-to') as HTMLInputElement).value;
+      const useDifferentImap = (document.getElementById('use-different-imap') as HTMLInputElement).checked;
+      const imapUsername = (document.getElementById('imap-username') as HTMLInputElement).value;
+      const imapPassword = (document.getElementById('imap-password') as HTMLInputElement).value;
+      const imapHost = (document.getElementById('imap-host') as HTMLInputElement).value;
+      const imapPort = (document.getElementById('imap-port') as HTMLInputElement).value;
+
+      // 3️⃣ Send to Backend
+      const res = await fetch('http://localhost:3001/api/emailcamp/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId, // 👈 PASSING THE USER ID DIRECTLY HERE
+          fromName,
+          fromEmail,
+          smtpUsername,
+          smtpPassword,
+          smtpHost,
+          smtpPort,
+          smtpSecurity,
+          replyTo,
+          useDifferentImap,
+          imapUsername,
+          imapPassword,
+          imapHost,
+          imapPort,
+          imapSecurity,
+          signature: (document.getElementById('email-signature') as HTMLTextAreaElement).value,
+          dailyLimit: messagesPerDay[0],
+          intervalMinutes: timeBetweenEmails[0]
+        })
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        alert('Email account saved successfully!');
+      } else {
+        alert('Failed to save: ' + (data.message || 'Check server logs'));
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Error saving email account. Check if server is running on port 3001.');
+    }
+  }}
+>
+  Save Email Account
+</Button>
           </div>
         </div>
       </main>
