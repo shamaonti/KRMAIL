@@ -58,7 +58,7 @@ router.post('/register', async (req, res) => {
 
     const [result] = await pool.query(
       `INSERT INTO users
-      (name, email, company, city, country, password_hash, is_verified)
+      (name, email, company, city, country, password, is_verified)
       VALUES (?, ?, ?, ?, ?, ?, 0)`,
       [
         name,
@@ -105,7 +105,7 @@ router.post('/login', async (req, res) => {
     }
 
     const user = rows[0];
-    const match = await bcrypt.compare(password, user.password_hash);
+    const match = await bcrypt.compare(password, user.password);
 
     if (!match) {
       return res.status(401).json({
@@ -178,10 +178,10 @@ router.put('/update-profile', async (req, res) => {
         hashedPassword = await bcrypt.hash(password, 10);
       }
       await pool.query(
-        `INSERT INTO user_security (user_id, password_hash, two_fa_enabled, api_key)
+        `INSERT INTO user_security (user_id, password, two_fa_enabled, api_key)
          VALUES (?, ?, ?, ?)
          ON DUPLICATE KEY UPDATE
-           password_hash = VALUES(password_hash),
+           password = VALUES(password),
            two_fa_enabled = VALUES(two_fa_enabled),
            api_key = VALUES(api_key)`,
         [userId, hashedPassword, twoFAEnabled || 0, apiKey || null]
