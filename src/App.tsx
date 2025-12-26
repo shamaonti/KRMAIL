@@ -30,6 +30,8 @@ const App = () => (
         <Routes>
           <Route path="/" element={<Index />} />
           <Route path="/auth" element={<Auth />} />
+          
+          {/* ✅ Dashboard handles ALL /dashboard/* routes internally */}
           <Route path="/dashboard/*" element={<Dashboard />} />
           <Route path="/blog" element={<Blog />} />
           <Route path="/about" element={<About />} />
@@ -42,7 +44,6 @@ const App = () => (
           <Route path="/campaign/concierge" element={<CampaignConcierge />} />
           <Route path="/campaign/recruitment" element={<CampaignRecruitment />} />
           <Route path="/campaign/document-ai" element={<CampaignDocumentAI />} />
-          {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>
