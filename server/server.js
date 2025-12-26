@@ -80,6 +80,8 @@ app.use('/api/email', emailRoutes);
 app.use('/api/campaigns', campaignRoutes);
 app.use('/api/leads', leadsRoutes);
 app.use('/api/emailcamp', emailCampRoutes);
+app.use("/api/email-templates", require("./routes/emailTemplates"));
+
 
 /* ---------------- 404 HANDLER ---------------- */
 app.use((req, res) => {

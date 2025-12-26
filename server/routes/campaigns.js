@@ -1,68 +1,22 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
+const db = require("../db");
 
-// In-memory storage for campaigns (replace with database in production)
-let campaigns = [];
+// helper (SELECT only)
+async function q(sql, params = []) {
+  const [rows] = await db.query(sql, params);
+  return rows;
+}
 
-// GET /api/campaigns - Get all campaigns
-router.get('/', (req, res) => {
+/**
+ * CREATE CAMPAIGN
+ * POST /api/campaigns
+ */
+router.post("/", async (req, res) => {
+  const conn = await db.getConnection(); // ✅ IMPORTANT
   try {
-    const { userId } = req.query;
-    
-    let filteredCampaigns = campaigns;
-    if (userId) {
-      filteredCampaigns = campaigns.filter(campaign => campaign.userId === parseInt(userId));
-    }
-    
-    res.status(200).json({
-      success: true,
-      message: 'Campaigns retrieved successfully',
-      data: filteredCampaigns
-    });
-    
-  } catch (error) {
-    console.error('Get campaigns error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error',
-      error: error.message
-    });
-  }
-});
+    await conn.beginTransaction(); // ✅ START TRANSACTION
 
-// GET /api/campaigns/:id - Get specific campaign
-router.get('/:id', (req, res) => {
-  try {
-    const { id } = req.params;
-    
-    const campaign = campaigns.find(c => c.id === id);
-    
-    if (!campaign) {
-      return res.status(404).json({
-        success: false,
-        message: 'Campaign not found'
-      });
-    }
-    
-    res.status(200).json({
-      success: true,
-      message: 'Campaign retrieved successfully',
-      data: campaign
-    });
-    
-  } catch (error) {
-    console.error('Get campaign error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error',
-      error: error.message
-    });
-  }
-});
-
-// POST /api/campaigns - Create new campaign
-router.post('/', (req, res) => {
-  try {
     const {
       userId,
       name,
@@ -70,212 +24,228 @@ router.post('/', (req, res) => {
       templateId,
       template,
       leads,
-      settings = {}
+      followupSettings,
+      runAt
     } = req.body;
-    
-    // Validation
-    if (!userId || !name || !subject || !template || !leads) {
-      return res.status(400).json({
-        error: 'Missing required fields: userId, name, subject, template, leads'
-      });
+
+    if (!userId || !name || !subject || !template || !Array.isArray(leads)) {
+      return res.status(400).json({ success: false, message: "Invalid payload" });
     }
-    
-    if (!Array.isArray(leads) || leads.length === 0) {
-      return res.status(400).json({
-        error: 'Leads must be a non-empty array'
-      });
-    }
-    
-    // Create campaign
-    const campaign = {
-      id: `campaign_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      userId: parseInt(userId),
-      name,
-      subject,
-      templateId,
-      template,
-      leads,
-      status: 'draft',
-      settings: {
-        timezone: 'UTC',
-        sendingHours: { from: '09:00', to: '17:00' },
-        abTesting: false,
-        delayBetweenEmails: 200,
-        ...settings
-      },
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
-    
-    campaigns.push(campaign);
-    
+
+    const hasFollowup = followupSettings ? 1 : 0;
+
+    const [result] = await conn.query(
+      `INSERT INTO email_campaigns
+       (user_id, name, subject, content, template_id,
+        status, scheduled_at, total_recipients,
+        has_followup, followup_template_id,
+        followup_subject, followup_delay_hours, followup_condition)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        userId,
+        name,
+        subject,
+        template.content || "",
+        templateId || null,
+        runAt ? "scheduled" : "draft",
+        runAt || null,
+        leads.length,
+        hasFollowup,
+        followupSettings?.templateId || null,
+        followupSettings?.subject || null,
+        followupSettings?.delayHours || 24,
+        followupSettings?.condition || "not_opened"
+      ]
+    );
+
+    const campaignId = result.insertId;
+
+    // ✅ INSERT LEADS INTO campaign_data
+    const values = leads.map(l => [
+      campaignId,
+      l.email,
+      l.name || null,
+      JSON.stringify(l)
+    ]);
+
+    await conn.query(
+      `INSERT IGNORE INTO campaign_data
+       (campaign_id, email, name, payload)
+       VALUES ?`,
+      [values]
+    );
+
+    await conn.commit(); // ✅ SAVE EVERYTHING
+
     res.status(201).json({
       success: true,
-      message: 'Campaign created successfully',
-      data: campaign
+      campaignId
     });
-    
-  } catch (error) {
-    console.error('Create campaign error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error',
-      error: error.message
+
+  } catch (err) {
+    await conn.rollback(); // ✅ SAFETY
+    console.error("Create campaign error:", err);
+    res.status(500).json({ success: false, message: err.message });
+  } finally {
+    conn.release(); // ✅ VERY IMPORTANT
+  }
+});
+/**
+ * GET ALL CAMPAIGNS
+ * GET /api/campaigns?userId=1
+ */
+router.get("/", async (req, res) => {
+  try {
+    const { userId } = req.query;
+    if (!userId) return res.status(400).json({ success: false, message: "userId required" });
+
+    const rows = await q(
+      `SELECT id, user_id, name, subject, status,
+              total_recipients, sent_count,
+              opened_count, clicked_count, bounced_count,
+              scheduled_at, created_at
+       FROM email_campaigns
+       WHERE user_id = ?
+       ORDER BY created_at DESC`,
+      [userId]
+    );
+
+    res.json({
+      success: true,
+      data: rows.map(r => ({
+        id: r.id,
+        userId: r.user_id,
+        name: r.name,
+        subject: r.subject,
+        status: r.status,
+        totalRecipients: r.total_recipients,
+        sentCount: r.sent_count,
+        openedCount: r.opened_count,
+        clickedCount: r.clicked_count,
+        bouncedCount: r.bounced_count,
+        scheduledAt: r.scheduled_at,
+        createdAt: r.created_at
+      }))
     });
+
+  } catch (err) {
+    console.error("Get campaigns error:", err);
+    res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// PUT /api/campaigns/:id - Update campaign
-router.put('/:id', (req, res) => {
+/**
+ * UPDATE CAMPAIGN STATUS / COUNTS
+ * PUT /api/campaigns/:id
+ */
+router.put("/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const updates = req.body;
-    
-    const campaignIndex = campaigns.findIndex(c => c.id === id);
-    
-    if (campaignIndex === -1) {
-      return res.status(404).json({
-        success: false,
-        message: 'Campaign not found'
-      });
-    }
-    
-    // Update campaign
-    campaigns[campaignIndex] = {
-      ...campaigns[campaignIndex],
-      ...updates,
-      updatedAt: new Date().toISOString()
-    };
-    
-    res.status(200).json({
-      success: true,
-      message: 'Campaign updated successfully',
-      data: campaigns[campaignIndex]
-    });
-    
-  } catch (error) {
-    console.error('Update campaign error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error',
-      error: error.message
-    });
+    const {
+      status,
+      sentCount,
+      openedCount,
+      clickedCount,
+      bouncedCount
+    } = req.body;
+
+    await db.query(
+      `UPDATE email_campaigns
+       SET status = COALESCE(?, status),
+           sent_count = COALESCE(?, sent_count),
+           opened_count = COALESCE(?, opened_count),
+           clicked_count = COALESCE(?, clicked_count),
+           bounced_count = COALESCE(?, bounced_count),
+           updated_at = NOW()
+       WHERE id = ?`,
+      [
+        status,
+        sentCount,
+        openedCount,
+        clickedCount,
+        bouncedCount,
+        id
+      ]
+    );
+
+    res.json({ success: true });
+
+  } catch (err) {
+    console.error("Update campaign error:", err);
+    res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// DELETE /api/campaigns/:id - Delete campaign
-router.delete('/:id', (req, res) => {
+/**
+ * DELETE CAMPAIGN
+ */
+router.delete("/:id", async (req, res) => {
   try {
-    const { id } = req.params;
-    
-    const campaignIndex = campaigns.findIndex(c => c.id === id);
-    
-    if (campaignIndex === -1) {
-      return res.status(404).json({
-        success: false,
-        message: 'Campaign not found'
-      });
-    }
-    
-    const deletedCampaign = campaigns.splice(campaignIndex, 1)[0];
-    
-    res.status(200).json({
-      success: true,
-      message: 'Campaign deleted successfully',
-      data: deletedCampaign
-    });
-    
-  } catch (error) {
-    console.error('Delete campaign error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error',
-      error: error.message
-    });
+    await db.query(`DELETE FROM email_campaigns WHERE id = ?`, [req.params.id]);
+    res.json({ success: true });
+  } catch (err) {
+    console.error("Delete campaign error:", err);
+    res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// POST /api/campaigns/:id/send - Send campaign
-router.post('/:id/send', (req, res) => {
+/**
+ * GET SINGLE CAMPAIGN BY ID
+ * GET /api/campaigns/:id
+ */
+router.get("/:id", async (req, res) => {
   try {
     const { id } = req.params;
     
-    const campaign = campaigns.find(c => c.id === id);
-    
-    if (!campaign) {
-      return res.status(404).json({
-        success: false,
-        message: 'Campaign not found'
-      });
-    }
-    
-    if (campaign.status === 'sent') {
-      return res.status(400).json({
-        success: false,
-        message: 'Campaign has already been sent'
-      });
-    }
-    
-    // Update campaign status to sending
-    campaign.status = 'sending';
-    campaign.updatedAt = new Date().toISOString();
-    
-    res.status(200).json({
-      success: true,
-      message: 'Campaign status updated to sending',
-      data: campaign
-    });
-    
-  } catch (error) {
-    console.error('Send campaign error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error',
-      error: error.message
-    });
-  }
-});
+    const rows = await q(
+      `SELECT 
+        id, user_id, name, subject, content, template_id,
+        status, total_recipients, sent_count, opened_count, 
+        clicked_count, bounced_count, scheduled_at, created_at,
+        has_followup, followup_template_id, followup_subject,
+        followup_delay_hours, followup_condition
+       FROM email_campaigns
+       WHERE id = ?`,
+      [id]
+    );
 
-// GET /api/campaigns/:id/analytics - Get campaign analytics
-router.get('/:id/analytics', (req, res) => {
-  try {
-    const { id } = req.params;
-    
-    const campaign = campaigns.find(c => c.id === id);
-    
-    if (!campaign) {
-      return res.status(404).json({
-        success: false,
-        message: 'Campaign not found'
+    if (rows.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        message: "Campaign not found" 
       });
     }
+
+    const campaign = rows[0];
     
-    // Return analytics if available
-    const analytics = campaign.analytics || {
-      totalSent: 0,
-      totalOpened: 0,
-      totalClicked: 0,
-      totalBounced: 0,
-      totalReplies: 0,
-      openRate: 0,
-      clickRate: 0,
-      bounceRate: 0,
-      replyRate: 0
-    };
-    
-    res.status(200).json({
+    res.json({
       success: true,
-      message: 'Campaign analytics retrieved successfully',
-      data: analytics
+      data: {
+        id: campaign.id,
+        userId: campaign.user_id,
+        name: campaign.name,
+        subject: campaign.subject,
+        content: campaign.content,
+        templateId: campaign.template_id,
+        status: campaign.status,
+        totalRecipients: campaign.total_recipients,
+        sentCount: campaign.sent_count,
+        openedCount: campaign.opened_count,
+        clickedCount: campaign.clicked_count,
+        bouncedCount: campaign.bounced_count,
+        scheduledAt: campaign.scheduled_at,
+        createdAt: campaign.created_at,
+        hasFollowup: campaign.has_followup,
+        followupTemplateId: campaign.followup_template_id,
+        followupSubject: campaign.followup_subject,
+        followupDelayHours: campaign.followup_delay_hours,
+        followupCondition: campaign.followup_condition
+      }
     });
-    
-  } catch (error) {
-    console.error('Get campaign analytics error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error',
-      error: error.message
-    });
+
+  } catch (err) {
+    console.error("Get campaign by ID error:", err);
+    res.status(500).json({ success: false, message: err.message });
   }
 });
 
