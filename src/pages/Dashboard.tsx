@@ -23,6 +23,7 @@ import MailBoxPage from './dashboard/MailBoxPage';
 import LeadsPage from './dashboard/LeadsPage';
 import EmailTemplatesPage from './dashboard/EmailTemplatesPage';
 import SettingsPage from './dashboard/SettingsPage';
+import CampaignResult from "./dashboard/CampaignResult";
 
 const Dashboard = () => {
   return (
@@ -93,6 +94,7 @@ const Dashboard = () => {
         <Routes>
           <Route path="/" element={<DashboardHome />} />
           <Route path="/campaign" element={<CampaignPage />} />
+          <Route path="/campaign-result/:id" element={<CampaignResult />} />
           <Route path="/inbox-addition" element={<InboxAdditionPage />} />
           <Route path="/mailbox" element={<MailBoxPage />} />
           <Route path="/leads" element={<LeadsPage />} />

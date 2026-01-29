@@ -14,6 +14,7 @@ const campaignRoutes = require('./routes/campaigns');
 const leadsRoutes = require('./routes/leads');
 const emailCampRoutes = require('./routes/emailcamp');
 const followupService = require('./services/followupService');
+const mailboxRoutes = require("./routes/mailbox");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -80,6 +81,10 @@ app.use('/api/email', emailRoutes);
 app.use('/api/campaigns', campaignRoutes);
 app.use('/api/leads', leadsRoutes);
 app.use('/api/emailcamp', emailCampRoutes);
+app.use("/api/email-templates", require("./routes/emailTemplates"));
+app.use("/api/mailbox", mailboxRoutes);
+
+require("./services/imapCron");
 
 /* ---------------- 404 HANDLER ---------------- */
 app.use((req, res) => {
