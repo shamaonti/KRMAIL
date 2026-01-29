@@ -238,61 +238,36 @@ const CampaignPage = () => {
   };
 
   const handleSendCampaign = async (campaign: Campaign) => {
-    if (campaign.status === 'sent' || campaign.status === 'sending') {
-      setErrors(['This campaign has already been sent or is currently sending']);
-      return;
-    }
+      try {
+        setSendingCampaignId(campaign.id);
+        setIsSending(true);
+        setErrors([]);
 
-    setSendingCampaignId(campaign.id);
-    setIsSending(true);
-    setSendingProgress(0);
-    setErrors([]);
+        const res = await fetch(
+          `${API_BASE_URL}/api/campaigns/${campaign.id}/send`,
+          { method: "POST" }
+        );
 
-    try {
-      await fetch(`${API_BASE_URL}/api/campaigns/${campaign.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'sending' })
-      });
+        const data = await res.json();
 
-      const progressInterval = setInterval(() => {
-        setSendingProgress(prev => {
-          if (prev >= 90) { clearInterval(progressInterval); return 90; }
-          return prev + 10;
-        });
-      }, 200);
+        if (!data.success) {
+          throw new Error(data.message);
+        }
 
-      // Simulate sending
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      clearInterval(progressInterval);
-      setSendingProgress(100);
+        await loadCampaigns();
 
-      const recipientCount = campaign.totalRecipients || campaign.leads?.length || 0;
-
-      await fetch(`${API_BASE_URL}/api/campaigns/${campaign.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          status: 'sent',
-          sentCount: recipientCount,
-          openedCount: 0,
-          clickedCount: 0,
-          bouncedCount: 0
-        })
-      });
-
-      await loadCampaigns();
-      setSuccessMessage(`Campaign "${campaign.name}" sent! ${recipientCount} emails sent.`);
-      setTimeout(() => setSuccessMessage(''), 5000);
-    } catch (error) {
-      console.error('Send campaign error:', error);
-      setErrors([`Failed to send campaign: ${error instanceof Error ? error.message : 'Unknown error'}`]);
-    } finally {
-      setIsSending(false);
-      setSendingProgress(0);
-      setSendingCampaignId(null);
-    }
+        setSuccessMessage(
+          `Campaign "${campaign.name}" sent successfully (${data.sentCount})`
+        );
+      } catch (err) {
+        setErrors([err instanceof Error ? err.message : "Send failed"]);
+      } finally {
+        setIsSending(false);
+        setSendingCampaignId(null);
+        setSendingProgress(0);
+      }
   };
+
 
   const handlePreview = () => {
     if (!selectedTemplate) { setErrors(['Please select an email template to preview']); return; }

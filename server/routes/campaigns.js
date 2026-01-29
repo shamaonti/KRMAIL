@@ -1,6 +1,9 @@
 const express = require("express");
 const router = express.Router();
 const db = require("../db");
+const { getLatestEmailAccount } = require("../helpers/emailAccount");
+const { createTransporter } = require("../helpers/mailer");
+
 
 // helper (SELECT only)
 async function q(sql, params = []) {
@@ -248,5 +251,79 @@ router.get("/:id", async (req, res) => {
     res.status(500).json({ success: false, message: err.message });
   }
 });
+/**
+ * SEND CAMPAIGN EMAILS (REAL SMTP)
+ * POST /api/campaigns/:id/send
+ */
+// mail send endpoint
+router.post("/:id/send", async (req, res) => {
+  const conn = await db.getConnection();
+  try {
+    const { id } = req.params;
+
+    console.log("➡️ SEND route hit:", id);   // ✅ LOG #1
+
+    // 1️⃣ Campaign fetch
+    const [campaignRows] = await conn.query(
+      `SELECT * FROM email_campaigns WHERE id = ?`,
+      [id]
+    );
+
+    if (!campaignRows.length) {
+      return res.status(404).json({ success: false, message: "Campaign not found" });
+    }
+
+    const campaign = campaignRows[0];
+
+    // 2️⃣ Leads fetch
+    const [leads] = await conn.query(
+      `SELECT email, name FROM campaign_data WHERE campaign_id = ?`,
+      [id]
+    );
+
+    // 3️⃣ Latest email account
+    const emailAccount = await getLatestEmailAccount(conn, campaign.user_id);
+
+    console.log("📧 SMTP account:", emailAccount.email); // ✅ LOG #2
+
+    // 4️⃣ Create transporter
+    const transporter = createTransporter(emailAccount);
+
+    // 5️⃣ Update status
+    await conn.query(
+      `UPDATE email_campaigns SET status = 'sending' WHERE id = ?`,
+      [id]
+    );
+
+    let sentCount = 0;
+
+    for (const lead of leads) {
+      await transporter.sendMail({
+        from: `"${emailAccount.from_name || 'Campaign'}" <${emailAccount.email}>`,
+        to: lead.email,
+        subject: campaign.subject,
+        html: campaign.content
+      });
+
+      sentCount++;
+    }
+
+    // 6️⃣ Final update
+    await conn.query(
+      `UPDATE email_campaigns SET status = 'sent', sent_count = ? WHERE id = ?`,
+      [sentCount, id]
+    );
+
+    res.json({ success: true, sentCount });
+
+  } catch (err) {
+    console.error("❌ SEND CAMPAIGN ERROR:", err);
+    res.status(500).json({ success: false, message: err.message });
+  } finally {
+    conn.release();
+  }
+});
+
+
 
 module.exports = router;
