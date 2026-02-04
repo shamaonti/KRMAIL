@@ -15,6 +15,7 @@ const leadsRoutes = require('./routes/leads');
 const emailCampRoutes = require('./routes/emailcamp');
 const followupService = require('./services/followupService');
 const mailboxRoutes = require("./routes/mailbox");
+const emailScheduler = require('./services/Emailscheduler');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -83,8 +84,40 @@ app.use('/api/leads', leadsRoutes);
 app.use('/api/emailcamp', emailCampRoutes);
 app.use("/api/email-templates", require("./routes/emailTemplates"));
 app.use("/api/mailbox", mailboxRoutes);
+app.use("/api/track", require("./routes/track"));
+app.use("/api/dashboard", require("./routes/dashboard"));
 
 require("./services/imapCron");
+
+/* ✅ SCHEDULER API ENDPOINTS (OPTIONAL - FOR MONITORING) */
+app.get('/api/scheduler/status', (req, res) => {
+  res.json({
+    success: true,
+    running: emailScheduler.cronJob !== null,
+    isPaused: emailScheduler.isPaused,
+    isProcessing: emailScheduler.isProcessing,
+    stats: emailScheduler.stats || {}
+  });
+});
+
+app.post('/api/scheduler/trigger', async (req, res) => {
+  try {
+    await emailScheduler.triggerManually();
+    res.json({ success: true, message: 'Scheduler triggered manually' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+app.post('/api/scheduler/pause', (req, res) => {
+  emailScheduler.pause();
+  res.json({ success: true, message: 'Scheduler paused' });
+});
+
+app.post('/api/scheduler/resume', (req, res) => {
+  emailScheduler.resume();
+  res.json({ success: true, message: 'Scheduler resumed' });
+});
 
 /* ---------------- 404 HANDLER ---------------- */
 app.use((req, res) => {
@@ -111,7 +144,27 @@ app.listen(PORT, () => {
   console.log(`🌍 Env: ${process.env.NODE_ENV || 'development'}`);
   console.log(`❤️  Health: http://localhost:${PORT}/health`);
 
+  // Start follow-up service
   followupService.startProcessor();
+  
+  // ✅ START EMAIL SCHEDULER
+  emailScheduler.start();
+  console.log(`📅 Email Scheduler: ACTIVE`);
+});
+
+/* ✅ GRACEFUL SHUTDOWN */
+process.on('SIGINT', () => {
+  console.log('\n📴 Shutting down gracefully...');
+  emailScheduler.stop();
+  followupService.stopProcessor();
+  process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+  console.log('\n📴 Shutting down gracefully...');
+  emailScheduler.stop();
+  followupService.stopProcessor();
+  process.exit(0);
 });
 
 module.exports = app;

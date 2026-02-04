@@ -1,430 +1,471 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
-import { Eye, EyeOff, TestTube, CheckCircle, AlertCircle, Database } from "lucide-react";
+import { Eye, EyeOff, TestTube } from "lucide-react";
 
 const InboxAdditionPage = () => {
-  const [showPassword, setShowPassword] = useState(false);
+  const [showPassword, setShowPassword] = useState({});
   const [messagesPerDay, setMessagesPerDay] = useState([50]);
   const [timeBetweenEmails, setTimeBetweenEmails] = useState([10]);
-  const [smtpPassword, setSmtpPassword] = useState('');
-  const [connectionStatus, setConnectionStatus] = useState<string | null>(null);
-  const [isTestingConnection, setIsTestingConnection] = useState(false);
 
-  // State for Select values
-  const [smtpSecurity, setSmtpSecurity] = useState('tls');
-  const [imapSecurity, setImapSecurity] = useState('ssl');
-  
-  // State for all form fields
   const [formData, setFormData] = useState({
-    fromName: '',
-    fromEmail: '',
-    smtpUsername: '',
-    smtpHost: '',
-    smtpPort: '',
-    replyTo: '',
     useDifferentImap: false,
-    imapUsername: '',
-    imapPassword: '',
-    imapHost: '',
-    imapPort: '',
     signature: ''
   });
 
-  // ✅ HOLD FUNCTION: Load saved data manually
-  const handleHold = async () => {
-    const email = formData.fromEmail.trim();
-    if (!email) {
-      alert("⚠️ Please enter an email address first.");
-      return;
+  // ✅ Combined configs - ek ID ke liye SMTP + IMAP dono
+  const [emailConfigs, setEmailConfigs] = useState([
+    {
+      id: 1,
+      recordId: null,
+      // SMTP fields
+      fromName: '',
+      fromEmail: '',
+      smtpUsername: '',
+      smtpPassword: '',
+      smtpHost: '',
+      smtpPort: '',
+      smtpSecurity: 'tls',
+      replyTo: '',
+      // IMAP fields
+      imapUsername: '',
+      imapPassword: '',
+      imapHost: '',
+      imapPort: '993',
+      imapSecurity: 'ssl'
     }
+  ]);
 
-    try {
-      const res = await fetch(`http://localhost:3001/api/emailcamp/details/${email}`);
-      const result = await res.json();
+  const handleInputChange = (field, value) => {
+    setFormData(prev => ({ ...prev, [field]: value }));
+  };
 
-      if (result.success && result.data) {
-        const d = result.data;
-        
-        console.log('📥 LOADED DATA:', d);
-        
-        // Update all form fields
-        setFormData({
-          fromName: d.from_name || '',
-          fromEmail: d.from_email || email,
-          smtpUsername: d.smtp_username || '',
-          smtpHost: d.smtp_host || '',
-          smtpPort: String(d.smtp_port || ''),
-          replyTo: d.reply_to || '',
-          useDifferentImap: d.use_different_imap === 1,
-          imapUsername: d.imap_username || '',
-          imapPassword: '', // Security: never load password
-          imapHost: d.imap_host || '',
-          imapPort: String(d.imap_port || ''),
-          signature: d.signature || ''
-        });
-        
-        // Update sliders
-        setMessagesPerDay([parseInt(d.daily_limit) || 50]);
-        setTimeBetweenEmails([parseInt(d.interval_minutes) || 10]);
-        
-        // Update selects
-        setSmtpSecurity(d.smtp_security || 'tls');
-        setImapSecurity(d.imap_security || 'ssl');
-        
-        // Keep password field empty for security
-        setSmtpPassword('');
-        
-        setConnectionStatus('success');
-        alert("✅ Data loaded successfully! Please enter passwords again.");
-        
-      } else {
-        alert("ℹ️ No saved data found for this email address.");
-        setConnectionStatus(null);
-      }
-    } catch (err) {
-      console.error("Error loading data:", err);
-      alert("⚠️ Failed to load data. Please check your connection.");
-      setConnectionStatus('error');
+  const addEmailConfig = () => {
+    setEmailConfigs([...emailConfigs, {
+      id: Date.now(),
+      recordId: null,
+      fromName: '',
+      fromEmail: '',
+      smtpUsername: '',
+      smtpPassword: '',
+      smtpHost: '',
+      smtpPort: '',
+      smtpSecurity: 'tls',
+      replyTo: '',
+      imapUsername: '',
+      imapPassword: '',
+      imapHost: '',
+      imapPort: '993',
+      imapSecurity: 'ssl'
+    }]);
+  };
+
+  const handleConfigChange = (id, field, value) => {
+    setEmailConfigs(emailConfigs.map(cfg =>
+      cfg.id === id ? { ...cfg, [field]: value } : cfg
+    ));
+  };
+
+  const removeConfig = (id) => {
+    if (emailConfigs.length > 1) {
+      setEmailConfigs(emailConfigs.filter(c => c.id !== id));
     }
   };
 
-  // ✅ SAVE/UPDATE LOGIC
+  const togglePasswordVisibility = (id) => {
+    setShowPassword(prev => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const getCurrentUserId = () => {
+    const user = JSON.parse(localStorage.getItem('user') || '{}');
+    return user.id || 1;
+  };
+
+  const loadSavedData = async () => {
+    try {
+      const userId = getCurrentUserId();
+      const res = await fetch(
+        `http://localhost:3001/api/emailcamp/details/${userId}`,
+        {
+          method: 'GET',
+          credentials: 'include',
+        }
+      );
+      const result = await res.json();
+      
+      if (!result.success || !result.data || result.data.length === 0) {
+        console.log("No saved data found.");
+        return;
+      }
+
+      const configs = result.data.map((d, index) => ({
+        id: Date.now() + index,
+        recordId: d.id,
+        // SMTP
+        fromName: d.from_name || '',
+        fromEmail: d.from_email || '',
+        smtpUsername: d.smtp_username || '',
+        smtpPassword: '',
+        smtpHost: d.smtp_host || '',
+        smtpPort: String(d.smtp_port || ''),
+        smtpSecurity: d.smtp_security || 'tls',
+        replyTo: d.reply_to || '',
+        // IMAP
+        imapUsername: d.imap_username || '',
+        imapPassword: '',
+        imapHost: d.imap_host || '',
+        imapPort: String(d.imap_port || '993'),
+        imapSecurity: d.imap_security || 'ssl'
+      }));
+
+      setEmailConfigs(configs);
+
+      // Common settings from first record
+      const d0 = result.data[0];
+      setFormData({
+        useDifferentImap: d0.use_different_imap === 1,
+        signature: d0.signature || ''
+      });
+
+      setMessagesPerDay([Number(d0.daily_limit) || 50]);
+      setTimeBetweenEmails([Number(d0.interval_minutes) || 10]);
+
+      console.log("✅ Data loaded successfully!");
+    } catch (err) {
+      console.error(err);
+      console.log("⚠️ Failed to load data.");
+    }
+  };
+
+  useEffect(() => {
+    loadSavedData();
+  }, []);
+
   const handleSave = async () => {
     try {
       const storedUser = localStorage.getItem('user');
       if (!storedUser) {
-        alert("❌ Please log in again. User ID not found.");
+        alert("❌ Please log in again.");
         return;
       }
       const user = JSON.parse(storedUser);
 
-      // Validation
-      if (!formData.fromEmail.trim()) {
-        alert("⚠️ From Email is required!");
-        return;
+      for (let config of emailConfigs) {
+        if (!config.fromEmail) continue;
+
+        const payload = {
+          userId: user.id,
+          recordId: config.recordId,
+          // SMTP
+          fromName: config.fromName,
+          fromEmail: config.fromEmail,
+          smtpUsername: config.smtpUsername,
+          smtpPassword: config.smtpPassword,
+          smtpHost: config.smtpHost,
+          smtpPort: config.smtpPort,
+          smtpSecurity: config.smtpSecurity,
+          replyTo: config.replyTo,
+          // IMAP
+          imapUsername: config.imapUsername,
+          imapPassword: config.imapPassword,
+          imapHost: config.imapHost,
+          imapPort: config.imapPort,
+          imapSecurity: config.imapSecurity,
+          // Settings
+          useDifferentImap: formData.useDifferentImap ? 1 : 0,
+          signature: formData.signature,
+          dailyLimit: messagesPerDay[0],
+          intervalMinutes: timeBetweenEmails[0]
+        };
+
+        const response = await fetch('http://localhost:3001/api/emailcamp/save', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) throw new Error("Save failed at server");
       }
 
-      const payload = {
-        userId: user.id,
-        fromName: formData.fromName,
-        fromEmail: formData.fromEmail,
-        smtpUsername: formData.smtpUsername,
-        smtpPassword: smtpPassword,
-        smtpHost: formData.smtpHost,
-        smtpPort: formData.smtpPort,
-        smtpSecurity,
-        replyTo: formData.replyTo,
-        useDifferentImap: formData.useDifferentImap,
-        imapUsername: formData.imapUsername,
-        imapPassword: formData.imapPassword,
-        imapHost: formData.imapHost,
-        imapPort: formData.imapPort,
-        imapSecurity,
-        signature: formData.signature,
-        dailyLimit: messagesPerDay[0],
-        intervalMinutes: timeBetweenEmails[0]
-      };
-
-      console.log('💾 SAVING PAYLOAD:', payload);
-
-      const res = await fetch('http://localhost:3001/api/emailcamp/save', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-
-      const data = await res.json();
-      if (data.success) {
-        alert('✅ Saved successfully to database!');
-        setConnectionStatus('success');
-      } else {
-        alert('❌ Error: ' + data.message);
-      }
+      alert("✅ All configurations saved successfully!");
+      await loadSavedData();
+      
     } catch (err) {
-      console.error('Save Error:', err);
-      alert('❌ Server connection failed.');
+      console.error(err);
+      alert("❌ Error while saving.");
     }
-  };
-
-  const testConnection = async () => {
-    setIsTestingConnection(true);
-    setTimeout(() => {
-      setConnectionStatus('success');
-      setIsTestingConnection(false);
-      alert('✅ Connection test successful!');
-    }, 2000);
-  };
-
-  // Handle input changes
-  const handleInputChange = (field: string, value: any) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
   };
 
   return (
     <>
       <header className="bg-white shadow-sm border-b border-gray-200">
-        <div className="px-6 py-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-2xl font-nunito font-semibold" style={{ color: '#012970' }}>Add Email Account</h2>
-            <div className="flex space-x-3">
-              <Button 
-                className="text-white font-medium" 
-                style={{ backgroundColor: '#059669' }}
-                onClick={handleHold}
-              >
-                <Database className="mr-2 h-4 w-4" />
-                Hold (Load Saved)
-              </Button>
-              <Button 
-                className="text-white font-medium" 
-                style={{ backgroundColor: '#1e3a8a' }}
-                onClick={testConnection}
-                disabled={isTestingConnection}
-              >
-                <TestTube className="mr-2 h-4 w-4" />
-                {isTestingConnection ? 'Testing...' : 'Test Connection'}
-              </Button>
-            </div>
+        <div className="px-4 py-3 flex justify-between items-center">
+          <h2 className="text-lg font-semibold" style={{ color: '#012970' }}>Add Email Account</h2>
+          <div className="flex space-x-2">
+            <Button style={{ backgroundColor: '#1e3a8a' }} className="text-white py-2 px-3">
+              <TestTube className="mr-1 h-4 w-4" /> Test
+            </Button>
           </div>
         </div>
       </header>
 
-      <main className="p-6">
-        <div className="max-w-4xl mx-auto">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* SMTP Settings */}
-            <Card className="border border-gray-200 shadow-sm">
-              <CardHeader>
-                <CardTitle className="font-nunito" style={{ color: '#012970' }}>SMTP Settings (Sending)</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="from-name">From Name</Label>
-                    <Input 
-                      id="from-name" 
-                      placeholder="John Doe" 
-                      value={formData.fromName}
-                      onChange={(e) => handleInputChange('fromName', e.target.value)}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="from-email">From Email</Label>
-                    <Input 
-                      id="from-email" 
-                      type="email" 
-                      placeholder="john@company.com" 
-                      value={formData.fromEmail}
-                      onChange={(e) => handleInputChange('fromEmail', e.target.value)}
-                    />
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="smtp-username">Username</Label>
-                  <Input 
-                    id="smtp-username" 
-                    placeholder="john@company.com" 
-                    value={formData.smtpUsername}
-                    onChange={(e) => handleInputChange('smtpUsername', e.target.value)}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="smtp-password">Password</Label>
-                  <div className="relative">
-                    <Input 
-                      id="smtp-password"
-                      type={showPassword ? "text" : "password"}
-                      value={smtpPassword}
-                      onChange={(e) => setSmtpPassword(e.target.value)}
-                      placeholder="App password"
-                    />
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
-                      onClick={() => setShowPassword(!showPassword)}
+      <main className="p-3 md:p-6 bg-gray-100 min-h-screen">
+        <Card className="w-full shadow-lg border bg-white">
+          <CardContent className="p-4 space-y-6">
+
+            {/* COMBINED EMAIL CONFIGS */}
+            <div>
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-base font-bold">Email Accounts</h3>
+                <Button 
+                  size="sm" 
+                  style={{ backgroundColor: '#1e3a8a', color: 'white' }} 
+                  onClick={addEmailConfig}
+                >
+                  + Add Email Account
+                </Button>
+              </div>
+
+              {emailConfigs.map((config) => (
+                <div key={config.id} className="mb-6 relative border-2 p-4 rounded-lg bg-gray-50 shadow">
+                  {/* Remove button */}
+                  {emailConfigs.length > 1 && (
+                    <button
+                      className="absolute top-2 right-2 text-red-500 font-bold text-xl hover:text-red-700"
+                      onClick={() => removeConfig(config.id)}
                     >
-                      {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </Button>
-                  </div>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="smtp-host">SMTP Host</Label>
-                    <Input 
-                      id="smtp-host" 
-                      placeholder="smtp.gmail.com" 
-                      value={formData.smtpHost}
-                      onChange={(e) => handleInputChange('smtpHost', e.target.value)}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="smtp-port">SMTP Port</Label>
-                    <Input 
-                      id="smtp-port" 
-                      type="number" 
-                      placeholder="587" 
-                      value={formData.smtpPort}
-                      onChange={(e) => handleInputChange('smtpPort', e.target.value)}
-                    />
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <Label>Security</Label>
-                  <Select value={smtpSecurity} onValueChange={setSmtpSecurity}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="tls">TLS</SelectItem>
-                      <SelectItem value="ssl">SSL</SelectItem>
-                      <SelectItem value="none">None</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="reply-to">Reply-To Address (Optional)</Label>
-                  <Input 
-                    id="reply-to" 
-                    type="email" 
-                    placeholder="support@company.com" 
-                    value={formData.replyTo}
-                    onChange={(e) => handleInputChange('replyTo', e.target.value)}
-                  />
-                </div>
-              </CardContent>
-            </Card>
+                      &times;
+                    </button>
+                  )}
 
-            {/* IMAP Settings */}
-            <Card className="border border-gray-200 shadow-sm">
-              <CardHeader>
-                <CardTitle className="font-nunito" style={{ color: '#012970' }}>IMAP Settings (Receiving)</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex items-center space-x-2">
-                  <Switch 
-                    id="use-different-imap" 
-                    checked={formData.useDifferentImap}
-                    onCheckedChange={(checked) => handleInputChange('useDifferentImap', checked)}
-                  />
-                  <Label htmlFor="use-different-imap">Use different account</Label>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="imap-username">IMAP Username</Label>
-                  <Input 
-                    id="imap-username" 
-                    placeholder="john@company.com" 
-                    value={formData.imapUsername}
-                    onChange={(e) => handleInputChange('imapUsername', e.target.value)}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="imap-password">IMAP Password</Label>
-                  <Input 
-                    id="imap-password" 
-                    type="password" 
-                    placeholder="••••••••" 
-                    value={formData.imapPassword}
-                    onChange={(e) => handleInputChange('imapPassword', e.target.value)}
-                  />
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="imap-host">IMAP Host</Label>
-                    <Input 
-                      id="imap-host" 
-                      placeholder="imap.gmail.com" 
-                      value={formData.imapHost}
-                      onChange={(e) => handleInputChange('imapHost', e.target.value)}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="imap-port">IMAP Port</Label>
-                    <Input 
-                      id="imap-port" 
-                      type="number" 
-                      placeholder="993" 
-                      value={formData.imapPort}
-                      onChange={(e) => handleInputChange('imapPort', e.target.value)}
-                    />
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <Label>IMAP Security</Label>
-                  <Select value={imapSecurity} onValueChange={setImapSecurity}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="ssl">SSL</SelectItem>
-                      <SelectItem value="tls">TLS</SelectItem>
-                      <SelectItem value="none">None</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                {connectionStatus && (
-                  <div className={`p-3 rounded-lg flex items-center space-x-2 ${
-                    connectionStatus === 'success' 
-                      ? 'bg-green-50 text-green-800' 
-                      : 'bg-red-50 text-red-800'
-                  }`}>
-                    {connectionStatus === 'success' 
-                      ? <CheckCircle className="h-4 w-4" /> 
-                      : <AlertCircle className="h-4 w-4" />
-                    }
-                    <span className="text-sm font-medium">
-                      {connectionStatus === 'success' ? 'Data Loaded Successfully!' : 'Failed to Load Data'}
-                    </span>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </div>
+                  {config.recordId && (
+                    <div className="text-xs text-blue-600 font-semibold mb-3">
+                      📧 Account ID: {config.recordId}
+                    </div>
+                  )}
 
-          {/* Email Settings */}
-          <Card className="border border-gray-200 shadow-sm mt-6">
-            <CardHeader>
-              <CardTitle className="font-nunito" style={{ color: '#012970' }}>Email Settings</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="space-y-3">
-                  <Label>Messages Per Day: {messagesPerDay[0]}</Label>
-                  <Slider value={messagesPerDay} onValueChange={setMessagesPerDay} max={480} min={1} />
+                  {/* SMTP SETTINGS */}
+                  <div className="mb-4">
+                    <h4 className="text-sm font-semibold text-gray-700 mb-3 border-b pb-2">
+                      📤 SMTP Settings (Sending)
+                    </h4>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                      <div>
+                        <Label className="text-sm">From Name</Label>
+                        <Input 
+                          placeholder="Sender name" 
+                          value={config.fromName} 
+                          onChange={e => handleConfigChange(config.id, 'fromName', e.target.value)} 
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-sm">From Email*</Label>
+                        <Input 
+                          placeholder="example@email.com" 
+                          type="email" 
+                          value={config.fromEmail} 
+                          onChange={e => handleConfigChange(config.id, 'fromEmail', e.target.value)} 
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-sm">SMTP Username</Label>
+                        <Input 
+                          placeholder="SMTP username" 
+                          value={config.smtpUsername} 
+                          onChange={e => handleConfigChange(config.id, 'smtpUsername', e.target.value)} 
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-sm">SMTP Password</Label>
+                        <div className="relative">
+                          <Input 
+                            placeholder="SMTP password" 
+                            type={showPassword[config.id] ? "text" : "password"} 
+                            value={config.smtpPassword} 
+                            onChange={e => handleConfigChange(config.id, 'smtpPassword', e.target.value)} 
+                          />
+                          <Button 
+                            type="button" 
+                            variant="ghost" 
+                            size="sm" 
+                            className="absolute right-1 top-1" 
+                            onClick={() => togglePasswordVisibility(config.id)}
+                          >
+                            {showPassword[config.id] ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                          </Button>
+                        </div>
+                      </div>
+                      <div>
+                        <Label className="text-sm">SMTP Host</Label>
+                        <Input 
+                          placeholder="smtp.gmail.com" 
+                          value={config.smtpHost} 
+                          onChange={e => handleConfigChange(config.id, 'smtpHost', e.target.value)} 
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-sm">SMTP Port</Label>
+                        <Input 
+                          placeholder="587" 
+                          value={config.smtpPort} 
+                          onChange={e => handleConfigChange(config.id, 'smtpPort', e.target.value)} 
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-sm">Security</Label>
+                        <Select 
+                          value={config.smtpSecurity} 
+                          onValueChange={val => handleConfigChange(config.id, 'smtpSecurity', val)}
+                        >
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="tls">TLS</SelectItem>
+                            <SelectItem value="ssl">SSL</SelectItem>
+                            <SelectItem value="none">None</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div>
+                        <Label className="text-sm">Reply To</Label>
+                        <Input 
+                          placeholder="reply@email.com" 
+                          value={config.replyTo} 
+                          onChange={e => handleConfigChange(config.id, 'replyTo', e.target.value)} 
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* IMAP SETTINGS */}
+                  <div className="mb-2">
+                    <h4 className="text-sm font-semibold text-gray-700 mb-3 border-b pb-2">
+                      📥 IMAP Settings (Receiving)
+                    </h4>
+                    
+                    <div className="flex items-center gap-2 mb-3 bg-blue-50 p-2 rounded">
+                      <Switch 
+                        checked={formData.useDifferentImap} 
+                        onCheckedChange={v => handleInputChange('useDifferentImap', v)} 
+                      />
+                      <Label className="text-sm font-semibold">Use different account for receiving emails</Label>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+                      <div>
+                        <Label className="text-sm">IMAP Username</Label>
+                        <Input 
+                          placeholder="IMAP username" 
+                          value={config.imapUsername} 
+                          onChange={e => handleConfigChange(config.id, 'imapUsername', e.target.value)} 
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-sm">IMAP Password</Label>
+                        <Input 
+                          placeholder="IMAP password" 
+                          type="password" 
+                          value={config.imapPassword} 
+                          onChange={e => handleConfigChange(config.id, 'imapPassword', e.target.value)} 
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-sm">IMAP Host</Label>
+                        <Input 
+                          placeholder="imap.gmail.com" 
+                          value={config.imapHost} 
+                          onChange={e => handleConfigChange(config.id, 'imapHost', e.target.value)} 
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-sm">IMAP Port</Label>
+                        <Input 
+                          placeholder="993" 
+                          value={config.imapPort} 
+                          onChange={e => handleConfigChange(config.id, 'imapPort', e.target.value)} 
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-sm">IMAP Security</Label>
+                        <Select 
+                          value={config.imapSecurity} 
+                          onValueChange={val => handleConfigChange(config.id, 'imapSecurity', val)}
+                        >
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="ssl">SSL</SelectItem>
+                            <SelectItem value="tls">TLS</SelectItem>
+                            <SelectItem value="none">None</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                  </div>
                 </div>
-                <div className="space-y-3">
-                  <Label>Time Between: {timeBetweenEmails[0]} min</Label>
-                  <Slider value={timeBetweenEmails} onValueChange={setTimeBetweenEmails} max={60} min={3} />
+              ))}
+            </div>
+
+            <hr />
+
+            {/* EMAIL SETTINGS */}
+            <div>
+              <h3 className="text-base font-bold mb-3">Email Settings</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <Label className="flex justify-between text-sm mb-2">
+                    <span>Messages Per Day</span>
+                    <span className="font-semibold text-blue-600">{messagesPerDay[0]}</span>
+                  </Label>
+                  <Slider 
+                    value={messagesPerDay} 
+                    onValueChange={setMessagesPerDay} 
+                    max={480} 
+                    min={1} 
+                  />
+                </div>
+                <div>
+                  <Label className="flex justify-between text-sm mb-2">
+                    <span>Time Between Emails (mins)</span>
+                    <span className="font-semibold text-blue-600">{timeBetweenEmails[0]}</span>
+                  </Label>
+                  <Slider 
+                    value={timeBetweenEmails} 
+                    onValueChange={setTimeBetweenEmails} 
+                    max={60} 
+                    min={3} 
+                  />
                 </div>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="email-signature">Email Signature</Label>
+
+              <div className="mt-4">
+                <Label className="text-sm font-semibold">Email Signature</Label>
                 <Textarea 
-                  id="email-signature" 
-                  placeholder="Best regards..." 
-                  rows={5} 
-                  value={formData.signature}
-                  onChange={(e) => handleInputChange('signature', e.target.value)}
+                  placeholder="Write your email signature here..." 
+                  value={formData.signature} 
+                  onChange={e => handleInputChange('signature', e.target.value)}
+                  rows={4}
                 />
               </div>
-            </CardContent>
-          </Card>
+            </div>
 
-          <div className="flex justify-end space-x-3 mt-6">
-            <Button variant="outline">Cancel</Button>
-            <Button 
-              style={{ backgroundColor: '#1e3a8a' }} 
-              className="text-white"
-              onClick={handleSave}
-            >
-              Save Email Account
-            </Button>
-          </div>
-        </div>
+            <div className="flex justify-end gap-3 pt-4 border-t">
+              <Button variant="outline">Cancel</Button>
+              <Button 
+                style={{ backgroundColor: '#1e3a8a' }} 
+                className="text-white px-6" 
+                onClick={handleSave}
+              >
+                💾 Save All Accounts
+              </Button>
+            </div>
+
+          </CardContent>
+        </Card>
       </main>
     </>
   );
