@@ -85,6 +85,7 @@ app.use('/api/emailcamp', emailCampRoutes);
 app.use("/api/email-templates", require("./routes/emailTemplates"));
 app.use("/api/mailbox", mailboxRoutes);
 app.use("/api/track", require("./routes/track"));
+app.use("/api/dashboard", require("./routes/dashboard"));
 
 require("./services/imapCron");
 

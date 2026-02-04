@@ -1,29 +1,55 @@
-
-import React from 'react';
-import { Routes, Route } from 'react-router-dom';
+import React, { useEffect, useMemo, useState } from "react";
+import { Routes, Route } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import LogoutButton from "@/components/LogoutButton";
-import { 
-  Mail, 
-  Plus, 
-  Inbox, 
-  Users, 
+import {
+  Mail,
+  Plus,
+  Inbox,
+  Users,
   FileText,
-  Menu,
   Home,
   Settings,
   BarChart3,
-  Send
+  Send,
 } from "lucide-react";
-import { Link } from 'react-router-dom';
-import CampaignPage from './dashboard/CampaignPage';
-import InboxAdditionPage from './dashboard/InboxAdditionPage';
-import MailBoxPage from './dashboard/MailBoxPage';
-import LeadsPage from './dashboard/LeadsPage';
-import EmailTemplatesPage from './dashboard/EmailTemplatesPage';
-import SettingsPage from './dashboard/SettingsPage';
+import { Link } from "react-router-dom";
+import CampaignPage from "./dashboard/CampaignPage";
+import InboxAdditionPage from "./dashboard/InboxAdditionPage";
+import MailBoxPage from "./dashboard/MailBoxPage";
+import LeadsPage from "./dashboard/LeadsPage";
+import EmailTemplatesPage from "./dashboard/EmailTemplatesPage";
+import SettingsPage from "./dashboard/SettingsPage";
 import CampaignResult from "./dashboard/CampaignResult";
+
+type RecentCampaign = {
+  id: number;
+  campaign_name?: string;
+  created_at?: string;
+  opened_count?: number;
+  clicked_count?: number;
+  // optional fields if you add later:
+  status?: string;
+};
+
+type DashboardOverview = {
+  activeCampaigns: number;
+  totalLeads: number;
+  emailsSent: number;
+  openRate: number;
+  recentCampaigns: RecentCampaign[];
+};
+
+const API_BASE = "http://localhost:3001";
+
+const formatNumber = (n: number) => {
+  try {
+    return new Intl.NumberFormat().format(n);
+  } catch {
+    return String(n);
+  }
+};
 
 const Dashboard = () => {
   return (
@@ -31,7 +57,9 @@ const Dashboard = () => {
       {/* Sidebar */}
       <div className="fixed inset-y-0 left-0 w-64 bg-white shadow-lg border-r border-gray-200">
         <div className="flex items-center px-6 py-4 border-b border-gray-200">
-          <h1 className="text-xl font-nunito font-bold" style={{ color: '#012970' }}>MarketSkrap</h1>
+          <h1 className="text-xl font-nunito font-bold" style={{ color: "#012970" }}>
+            MarketSkrap
+          </h1>
         </div>
         <nav className="mt-6">
           <div className="px-3">
@@ -42,30 +70,35 @@ const Dashboard = () => {
                   Dashboard
                 </Button>
               </Link>
+
               <Link to="/dashboard/campaign">
                 <Button variant="ghost" className="w-full justify-start hover:bg-blue-50 hover:text-blue-700">
                   <Mail className="mr-3 h-4 w-4" />
                   Campaign
                 </Button>
               </Link>
+
               <Link to="/dashboard/inbox-addition">
                 <Button variant="ghost" className="w-full justify-start hover:bg-blue-50 hover:text-blue-700">
                   <Plus className="mr-3 h-4 w-4" />
                   Inbox Addition
                 </Button>
               </Link>
+
               <Link to="/dashboard/mailbox">
                 <Button variant="ghost" className="w-full justify-start hover:bg-blue-50 hover:text-blue-700">
                   <Inbox className="mr-3 h-4 w-4" />
                   Mail Box
                 </Button>
               </Link>
+
               <Link to="/dashboard/leads">
                 <Button variant="ghost" className="w-full justify-start hover:bg-blue-50 hover:text-blue-700">
                   <Users className="mr-3 h-4 w-4" />
                   Leads
                 </Button>
               </Link>
+
               <Link to="/dashboard/email-templates">
                 <Button variant="ghost" className="w-full justify-start hover:bg-blue-50 hover:text-blue-700">
                   <FileText className="mr-3 h-4 w-4" />
@@ -74,6 +107,7 @@ const Dashboard = () => {
               </Link>
             </div>
           </div>
+
           <div className="mt-8 pt-4 border-t border-gray-200 px-3">
             <Link to="/dashboard/settings">
               <Button variant="ghost" className="w-full justify-start hover:bg-blue-50 hover:text-blue-700">
@@ -81,8 +115,9 @@ const Dashboard = () => {
                 Settings
               </Button>
             </Link>
-            <LogoutButton 
-              variant="ghost" 
+
+            <LogoutButton
+              variant="ghost"
               className="w-full justify-start text-red-600 hover:text-red-700 hover:bg-red-50"
             />
           </div>
@@ -107,23 +142,79 @@ const Dashboard = () => {
 };
 
 const DashboardHome = () => {
+  const [overview, setOverview] = useState<DashboardOverview | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchOverview = async () => {
+    try {
+      setError(null);
+      setLoading(true);
+
+      const res = await fetch(`${API_BASE}/api/dashboard/overview`, {
+        credentials: "include",
+      });
+
+      if (!res.ok) {
+        throw new Error(`Dashboard API failed with ${res.status}`);
+      }
+
+      const data: DashboardOverview = await res.json();
+      setOverview(data);
+    } catch (e: any) {
+      console.error("Dashboard fetch error:", e);
+      setOverview(null);
+      setError(e?.message || "Failed to load dashboard");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchOverview();
+    // Optional: auto-refresh every 15 seconds
+    const id = setInterval(fetchOverview, 15000);
+    return () => clearInterval(id);
+  }, []);
+
+  const recentCampaigns = useMemo(() => overview?.recentCampaigns || [], [overview]);
+
   return (
     <>
       <header className="bg-white shadow-sm border-b border-gray-200">
         <div className="px-6 py-4">
           <div className="flex items-center justify-between">
-            <h2 className="text-2xl font-nunito font-semibold" style={{ color: '#012970' }}>Dashboard Overview</h2>
-            <Link to="/dashboard/campaign">
-              <Button className="text-white font-medium" style={{ backgroundColor: '#1e3a8a' }}>
-                <Plus className="mr-2 h-4 w-4" />
-                New Campaign
+            <h2 className="text-2xl font-nunito font-semibold" style={{ color: "#012970" }}>
+              Dashboard Overview
+            </h2>
+
+            <div className="flex items-center gap-3">
+              <Button
+                variant="outline"
+                className="border-gray-300 hover:bg-gray-50"
+                onClick={fetchOverview}
+                disabled={loading}
+                title="Refresh live data"
+              >
+                Refresh
               </Button>
-            </Link>
+
+              <Link to="/dashboard/campaign">
+                <Button className="text-white font-medium" style={{ backgroundColor: "#1e3a8a" }}>
+                  <Plus className="mr-2 h-4 w-4" />
+                  New Campaign
+                </Button>
+              </Link>
+            </div>
           </div>
+          {error ? (
+            <p className="mt-2 text-sm text-red-600">Error: {error}</p>
+          ) : null}
         </div>
       </header>
 
       <main className="p-6">
+        {/* Stats */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
           <Card className="border border-gray-200 shadow-sm">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -131,8 +222,10 @@ const DashboardHome = () => {
               <Mail className="h-4 w-4 text-gray-400" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold" style={{ color: '#012970' }}>12</div>
-              <p className="text-xs text-gray-500">+2 from last month</p>
+              <div className="text-2xl font-bold" style={{ color: "#012970" }}>
+                {loading ? "…" : formatNumber(overview?.activeCampaigns ?? 0)}
+              </div>
+              <p className="text-xs text-gray-500">Live from database</p>
             </CardContent>
           </Card>
 
@@ -142,8 +235,10 @@ const DashboardHome = () => {
               <Users className="h-4 w-4 text-gray-400" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold" style={{ color: '#012970' }}>2,847</div>
-              <p className="text-xs text-gray-500">+180 from last month</p>
+              <div className="text-2xl font-bold" style={{ color: "#012970" }}>
+                {loading ? "…" : formatNumber(overview?.totalLeads ?? 0)}
+              </div>
+              <p className="text-xs text-gray-500">Live from database</p>
             </CardContent>
           </Card>
 
@@ -153,8 +248,10 @@ const DashboardHome = () => {
               <Send className="h-4 w-4 text-gray-400" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold" style={{ color: '#012970' }}>15,234</div>
-              <p className="text-xs text-gray-500">+1,201 from last month</p>
+              <div className="text-2xl font-bold" style={{ color: "#012970" }}>
+                {loading ? "…" : formatNumber(overview?.emailsSent ?? 0)}
+              </div>
+              <p className="text-xs text-gray-500">Live from database</p>
             </CardContent>
           </Card>
 
@@ -164,52 +261,63 @@ const DashboardHome = () => {
               <BarChart3 className="h-4 w-4 text-gray-400" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold" style={{ color: '#012970' }}>24.5%</div>
-              <p className="text-xs text-gray-500">+2.1% from last month</p>
+              <div className="text-2xl font-bold" style={{ color: "#012970" }}>
+                {loading ? "…" : `${overview?.openRate ?? 0}%`}
+              </div>
+              <p className="text-xs text-gray-500">Live from database</p>
             </CardContent>
           </Card>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Recent Campaigns */}
           <Card className="border border-gray-200 shadow-sm">
             <CardHeader>
-              <CardTitle className="font-nunito" style={{ color: '#012970' }}>Recent Campaigns</CardTitle>
+              <CardTitle className="font-nunito" style={{ color: "#012970" }}>
+                Recent Campaigns
+              </CardTitle>
             </CardHeader>
+
             <CardContent>
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="font-medium text-gray-900">Welcome Series</p>
-                    <p className="text-sm text-gray-500">Started 2 days ago</p>
-                  </div>
-                  <span className="px-2 py-1 bg-green-100 text-green-800 rounded-full text-xs">Active</span>
+              {loading ? (
+                <div className="text-sm text-gray-500">Loading recent campaigns…</div>
+              ) : recentCampaigns.length === 0 ? (
+                <div className="text-sm text-gray-500">No campaigns found.</div>
+              ) : (
+                <div className="space-y-4">
+                  {recentCampaigns.map((c) => (
+                    <div key={c.id} className="flex items-center justify-between">
+                      <div>
+                        <p className="font-medium text-gray-900">
+                          {c.campaign_name ? c.campaign_name : `Campaign #${c.id}`}
+                        </p>
+                        <p className="text-sm text-gray-500">
+                          Opens: {c.opened_count ?? 0} • Clicks: {c.clicked_count ?? 0}
+                        </p>
+                      </div>
+
+                      {/* If you later add "status" from backend, it will show nicely */}
+                      <span className="px-2 py-1 bg-gray-100 text-gray-700 rounded-full text-xs">
+                        {c.status ? c.status : "Live"}
+                      </span>
+                    </div>
+                  ))}
                 </div>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="font-medium text-gray-900">Product Launch</p>
-                    <p className="text-sm text-gray-500">Started 1 week ago</p>
-                  </div>
-                  <span className="px-2 py-1 bg-blue-100 text-blue-800 rounded-full text-xs">Completed</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="font-medium text-gray-900">Newsletter</p>
-                    <p className="text-sm text-gray-500">Started 3 days ago</p>
-                  </div>
-                  <span className="px-2 py-1 bg-green-100 text-green-800 rounded-full text-xs">Active</span>
-                </div>
-              </div>
+              )}
             </CardContent>
           </Card>
 
+          {/* Quick Actions */}
           <Card className="border border-gray-200 shadow-sm">
             <CardHeader>
-              <CardTitle className="font-nunito" style={{ color: '#012970' }}>Quick Actions</CardTitle>
+              <CardTitle className="font-nunito" style={{ color: "#012970" }}>
+                Quick Actions
+              </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="space-y-3">
                 <Link to="/dashboard/campaign">
-                  <Button className="w-full justify-start text-white font-medium" style={{ backgroundColor: '#1e3a8a' }}>
+                  <Button className="w-full justify-start text-white font-medium" style={{ backgroundColor: "#1e3a8a" }}>
                     <Mail className="mr-2 h-4 w-4" />
                     Create New Campaign
                   </Button>
