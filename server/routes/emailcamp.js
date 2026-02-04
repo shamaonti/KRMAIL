@@ -8,11 +8,12 @@ const pool = require('../db');
  * ============================================
  * Rule:
  * - Ek user + ek from_email = ek hi active config
- * - Agar same email dobara save ho → UPDATE
+ * - Agar same email dobara save ho → UPDATE (based on ID if exists, or from_email)
  */
 router.post('/save', async (req, res) => {
   const {
     userId,
+    recordId,  // ✅ NEW: Frontend se ID bhi aayega agar edit kar rahe hain
     fromName,
     fromEmail,
     smtpUsername,
@@ -40,73 +41,114 @@ router.post('/save', async (req, res) => {
   }
 
   console.log('📩 SMTP PASSWORD RECEIVED:', smtpPassword ? 'YES' : 'NO');
+  console.log('🆔 RECORD ID:', recordId);
 
   try {
-    /**
-     * IMPORTANT:
-     * Table must have UNIQUE KEY (user_id, from_email)
-     */
-    const query = `
-      INSERT INTO user_email_accounts (
-        user_id,
-        from_name,
-        from_email,
-        smtp_username,
-        smtp_password,
-        smtp_host,
-        smtp_port,
-        smtp_security,
-        reply_to,
-        use_different_imap,
-        imap_username,
-        imap_password,
-        imap_host,
-        imap_port,
-        imap_security,
-        signature,
-        daily_limit,
-        interval_minutes
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON DUPLICATE KEY UPDATE
-        from_name = VALUES(from_name),
-        smtp_username = VALUES(smtp_username),
-        smtp_password = VALUES(smtp_password),
-        smtp_host = VALUES(smtp_host),
-        smtp_port = VALUES(smtp_port),
-        smtp_security = VALUES(smtp_security),
-        reply_to = VALUES(reply_to),
-        use_different_imap = VALUES(use_different_imap),
-        imap_username = VALUES(imap_username),
-        imap_password = VALUES(imap_password),
-        imap_host = VALUES(imap_host),
-        imap_port = VALUES(imap_port),
-        imap_security = VALUES(imap_security),
-        signature = VALUES(signature),
-        daily_limit = VALUES(daily_limit),
-        interval_minutes = VALUES(interval_minutes),
-        created_at = CURRENT_TIMESTAMP
-    `;
+    // Check if record exists
+    const [existing] = await pool.query(
+      'SELECT id FROM user_email_accounts WHERE user_id = ? AND from_email = ?',
+      [userId, fromEmail]
+    );
 
-    const values = [
-      userId,
-      fromName || null,
-      fromEmail,
-      smtpUsername || fromEmail,
-      smtpPassword && smtpPassword.trim() ? smtpPassword.trim() : null,
-      smtpHost || null,
-      parseInt(smtpPort) || 587,
-      smtpSecurity || 'tls',
-      replyTo || null,
-      useDifferentImap ? 1 : 0,
-      imapUsername || null,
-      imapPassword || null,
-      imapHost || null,
-      parseInt(imapPort) || null,
-      imapSecurity || 'ssl',
-      signature || null,
-      dailyLimit || 50,
-      intervalMinutes || 10
-    ];
+    let query, values;
+
+    if (existing.length > 0 || recordId) {
+      // ✅ UPDATE existing record
+      const updateId = recordId || existing[0].id;
+      
+      query = `
+        UPDATE user_email_accounts SET
+          from_name = ?,
+          smtp_username = ?,
+          ${smtpPassword && smtpPassword.trim() ? 'smtp_password = ?,' : ''}
+          smtp_host = ?,
+          smtp_port = ?,
+          smtp_security = ?,
+          reply_to = ?,
+          use_different_imap = ?,
+          imap_username = ?,
+          ${imapPassword && imapPassword.trim() ? 'imap_password = ?,' : ''}
+          imap_host = ?,
+          imap_port = ?,
+          imap_security = ?,
+          signature = ?,
+          daily_limit = ?,
+          interval_minutes = ?,
+          created_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND user_id = ?
+      `;
+
+      values = [
+        fromName || null,
+        smtpUsername || fromEmail,
+        ...(smtpPassword && smtpPassword.trim() ? [smtpPassword.trim()] : []),
+        smtpHost || null,
+        parseInt(smtpPort) || 587,
+        smtpSecurity || 'tls',
+        replyTo || null,
+        useDifferentImap ? 1 : 0,
+        imapUsername || null,
+        ...(imapPassword && imapPassword.trim() ? [imapPassword.trim()] : []),
+        imapHost || null,
+        parseInt(imapPort) || null,
+        imapSecurity || 'ssl',
+        signature || null,
+        dailyLimit || 50,
+        intervalMinutes || 10,
+        updateId,
+        userId
+      ];
+
+      console.log('🔄 UPDATING record ID:', updateId);
+
+    } else {
+      // ✅ INSERT new record
+      query = `
+        INSERT INTO user_email_accounts (
+          user_id,
+          from_name,
+          from_email,
+          smtp_username,
+          smtp_password,
+          smtp_host,
+          smtp_port,
+          smtp_security,
+          reply_to,
+          use_different_imap,
+          imap_username,
+          imap_password,
+          imap_host,
+          imap_port,
+          imap_security,
+          signature,
+          daily_limit,
+          interval_minutes
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `;
+
+      values = [
+        userId,
+        fromName || null,
+        fromEmail,
+        smtpUsername || fromEmail,
+        smtpPassword && smtpPassword.trim() ? smtpPassword.trim() : null,
+        smtpHost || null,
+        parseInt(smtpPort) || 587,
+        smtpSecurity || 'tls',
+        replyTo || null,
+        useDifferentImap ? 1 : 0,
+        imapUsername || null,
+        imapPassword || null,
+        imapHost || null,
+        parseInt(imapPort) || null,
+        imapSecurity || 'ssl',
+        signature || null,
+        dailyLimit || 50,
+        intervalMinutes || 10
+      ];
+
+      console.log('➕ INSERTING new record');
+    }
 
     await pool.query(query, values);
 
@@ -124,7 +166,6 @@ router.post('/save', async (req, res) => {
   }
 });
 
-
 /**
  * ============================================
  * 2. FETCH LATEST SAVED EMAIL ACCOUNT
@@ -133,8 +174,8 @@ router.post('/save', async (req, res) => {
  * - Hamesha LATEST record return hoga
  * - Password kabhi return nahi karna (security)
  */
-router.get('/details/:email', async (req, res) => {
-  const { email } = req.params;
+router.get('/details/:userId', async (req, res) => {
+  const { userId } = req.params;
 
   try {
     const [rows] = await pool.query(
@@ -159,23 +200,16 @@ router.get('/details/:email', async (req, res) => {
         interval_minutes,
         created_at
       FROM user_email_accounts
-      WHERE from_email = ?
+      WHERE user_id = ?
       ORDER BY created_at DESC
-      LIMIT 1
       `,
-      [email]
+      [userId]
     );
-
-    if (!rows.length) {
-      return res.json({
-        success: false,
-        message: 'No email account found'
-      });
-    }
-
+    //console.log('📬 FETCHED EMAIL ACCOUNT:', rows);
+    
     return res.json({
       success: true,
-      data: rows[0]
+      data: rows
     });
 
   } catch (err) {
@@ -188,5 +222,3 @@ router.get('/details/:email', async (req, res) => {
 });
 
 module.exports = router;
-
-
