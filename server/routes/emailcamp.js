@@ -125,7 +125,6 @@ router.post('/save', async (req, res) => {
 });
 
 
-
 /**
  * ============================================
  * 2. FETCH LATEST SAVED EMAIL ACCOUNT
@@ -189,3 +188,5 @@ router.get('/details/:email', async (req, res) => {
 });
 
 module.exports = router;
+
+
