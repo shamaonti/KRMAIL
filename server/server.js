@@ -15,7 +15,7 @@ const leadsRoutes = require('./routes/leads');
 const emailCampRoutes = require('./routes/emailcamp');
 const followupService = require('./services/followupService');
 const mailboxRoutes = require("./routes/mailbox");
-const emailScheduler = require('./services/Emailscheduler');
+const emailScheduler = require('./services/emailScheduler');
 
 const app = express();
 const PORT = process.env.PORT || 3001;

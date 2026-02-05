@@ -10,8 +10,9 @@ async function runInboxSync() {
     );
 
     for (const u of users) {
-      console.log("📥 Sync inbox for user:", u.user_id);
-      await syncInboxForUser(u.user_id);
+      const userId = Number(u.user_id);
+      console.log("📥 Sync inbox for user:", userId);
+      await syncInboxForUser(userId);
     }
 
     console.log("✅ IMAP cron cycle completed");
@@ -20,8 +21,5 @@ async function runInboxSync() {
   }
 }
 
-// 🔁 every 60 seconds
 setInterval(runInboxSync, 60 * 1000);
-
-// 🔥 run immediately on server start
 runInboxSync();

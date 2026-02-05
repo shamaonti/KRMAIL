@@ -2,91 +2,104 @@ const express = require("express");
 const router = express.Router();
 const db = require("../db");
 const { createTransporter } = require("../helpers/mailer");
-const { getLatestEmailAccount } = require("../helpers/emailAccount");
+const { getEmailAccountByAddress } = require("../helpers/emailAccount");
 
-/**
- * ===============================
- * GET INBOX EMAILS (ROUTE USER)
- * ===============================
- * GET /api/mailbox/inbox/:userId
- */
+/* ===============================
+   GET INBOX EMAILS
+================================ */
 router.get("/inbox/:userId", async (req, res) => {
-  res.set("Cache-Control", "no-store"); // 🔥 VERY IMPORTANT
+  res.set("Cache-Control", "no-store");
 
-  const { userId } = req.params;
+  const userId = Number(req.params.userId);
+
+  if (!Number.isInteger(userId)) {
+    return res.status(400).json({ success: false, message: "Invalid user id" });
+  }
 
   try {
     const [rows] = await db.query(
       `
-      SELECT *
+      SELECT 
+        id,
+        user_id,
+        account_email,
+        from_email,
+        to_email,
+        subject,
+        body,
+        preview,
+        is_read,
+        received_at
       FROM inbox_emails
       WHERE user_id = ?
-      ORDER BY received_at DESC
+      ORDER BY account_email, received_at DESC
       `,
       [userId]
     );
 
-    res.json({
-      success: true,
-      data: rows
+    const grouped = {};
+    rows.forEach(mail => {
+      if (!grouped[mail.account_email]) grouped[mail.account_email] = [];
+      grouped[mail.account_email].push(mail);
     });
+
+    res.json({ success: true, data: grouped });
   } catch (err) {
     console.error("INBOX ERROR:", err);
     res.status(500).json({ success: false });
   }
 });
-/**
- * ===============================
- * SEND + STORE REPLY
- * ===============================
- * POST /api/mailbox/reply/:userId
- */
-router.post("/reply/:userId", async (req, res) => {
-  const { userId } = req.params;
-  const { inboxEmailId, to, subject, message } = req.body;
 
-  if (!userId) {
+/* ===============================
+   SEND REPLY
+================================ */
+router.post("/reply/:userId", async (req, res) => {
+  const userId = Number(req.params.userId);
+  const inboxEmailId = Number(req.body.inboxEmailId);
+  const { to, subject, message } = req.body;
+
+  if (!Number.isInteger(userId) || !Number.isInteger(inboxEmailId)) {
     return res.status(400).json({
       success: false,
-      message: "User ID required"
+      message: "Invalid userId or inboxEmailId"
     });
   }
 
   try {
-    // 1️⃣ get latest SMTP config
-    const emailAccount = await getLatestEmailAccount(userId);
+    const [[mailRow]] = await db.query(
+      `SELECT account_email FROM inbox_emails WHERE id=? AND user_id=?`,
+      [inboxEmailId, userId]
+    );
 
-    if (!emailAccount) {
-      return res.status(400).json({
-        success: false,
-        message: "No email account found"
-      });
+    if (!mailRow) {
+      return res.status(404).json({ success: false, message: "Inbox email not found" });
     }
 
-    // 2️⃣ send email
+    const emailAccount = await getEmailAccountByAddress(userId, mailRow.account_email);
+
+    if (!emailAccount) {
+      return res.status(400).json({ success: false, message: "Email account config not found" });
+    }
+
     const transporter = createTransporter(emailAccount);
 
     await transporter.sendMail({
-      from: emailAccount.from_email,
+      from: mailRow.account_email,
       to,
       subject,
       html: message
     });
 
-    // 3️⃣ store reply
     await db.query(
       `
       INSERT INTO email_replies
-      (inbox_email_id, user_id, to_email, subject, message, sent_at)
-      VALUES (?, ?, ?, ?, ?, NOW())
+      (inbox_email_id, user_id, from_email, to_email, subject, message, sent_at)
+      VALUES (?, ?, ?, ?, ?, ?, NOW())
       `,
-      [inboxEmailId, userId, to, subject, message]
+      [inboxEmailId, userId, mailRow.account_email, to, subject, message]
     );
 
-    res.json({
-      success: true,
-      message: "Reply sent & stored"
-    });
+    res.json({ success: true, message: "Reply sent & stored" });
   } catch (err) {
     console.error("REPLY ERROR:", err);
     res.status(500).json({ success: false });
@@ -94,3 +107,4 @@ router.post("/reply/:userId", async (req, res) => {
 });
 
 module.exports = router;
+  
