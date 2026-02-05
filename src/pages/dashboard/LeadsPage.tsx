@@ -574,7 +574,7 @@ const LeadsPage = () => {
         <div className="px-6 py-4">
           <div className="flex items-center justify-between">
             <h2 className="text-2xl font-nunito font-semibold" style={{ color: "#012970" }}>
-              Leads Management
+              Data Management
             </h2>
             <div className="flex gap-3">
               <Button variant="outline" className="border-gray-300" onClick={handleExportCSV}>
@@ -588,7 +588,7 @@ const LeadsPage = () => {
                 onClick={handleImportClick}
               >
                 <Upload className="mr-2 h-4 w-4" />
-                Import Leads
+                Import Data
               </Button>
 
               <Button
@@ -596,7 +596,7 @@ const LeadsPage = () => {
                 style={{ backgroundColor: "#1e3a8a" }}
                 onClick={() => setIsAddOpen(true)}
               >
-                Add Lead
+                Add Data
               </Button>
 
               <input
@@ -618,7 +618,7 @@ const LeadsPage = () => {
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-gray-600">Total Leads</p>
+                  <p className="text-sm text-gray-600">Total Data</p>
                   <p className="text-2xl font-bold" style={{ color: "#012970" }}>
                     {leads.length.toLocaleString()}
                   </p>
@@ -688,7 +688,7 @@ const LeadsPage = () => {
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
                 <Input
-                  placeholder="Search leads by email, name, or company..."
+                  placeholder="Search Data by email, name, or company..."
                   className="pl-10"
                   value={searchText}
                   onChange={(e) => setSearchText(e.target.value)}
@@ -700,10 +700,10 @@ const LeadsPage = () => {
                   <SelectValue placeholder="Filter by status" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All Leads</SelectItem>
-                  <SelectItem value="hot">Hot Leads</SelectItem>
+                  <SelectItem value="all">All Data</SelectItem>
+                  <SelectItem value="hot">Hot Lead</SelectItem>
                   <SelectItem value="replied">Replied</SelectItem>
-                  <SelectItem value="cold">Cold Leads</SelectItem>
+                  <SelectItem value="cold">Cold Lead</SelectItem>
                 </SelectContent>
               </Select>
 
@@ -734,7 +734,7 @@ const LeadsPage = () => {
             {isMoreFiltersOpen && (
               <div className="mt-4 p-4 border border-gray-200 rounded-md bg-gray-50">
                 <div className="flex flex-col md:flex-row gap-3 md:items-center">
-                  <Label className="text-sm text-gray-600">Add tag to selected leads</Label>
+                  <Label className="text-sm text-gray-600">Add tag to selected Data</Label>
                   <Input
                     className="md:w-64"
                     placeholder="e.g. fintech"
@@ -766,7 +766,7 @@ const LeadsPage = () => {
 
             {selectedLeads.length > 0 && (
               <div className="mt-4 flex items-center space-x-2">
-                <span className="text-sm text-gray-600">{selectedLeads.length} leads selected</span>
+                <span className="text-sm text-gray-600">{selectedLeads.length} data selected</span>
                 <Button
                   size="sm"
                   variant="outline"
@@ -806,7 +806,7 @@ const LeadsPage = () => {
                       }}
                     />
                   </TableHead>
-                  <TableHead>Lead Information</TableHead>
+                  <TableHead>Data Information</TableHead>
                   <TableHead>Company</TableHead>
                   <TableHead className="whitespace-nowrap">Added Date</TableHead>
                   <TableHead>Campaigns</TableHead>
@@ -919,7 +919,7 @@ const LeadsPage = () => {
         <Card className="border border-gray-200 shadow-sm mt-6">
           <CardHeader>
             <CardTitle className="font-nunito" style={{ color: "#012970" }}>
-              Lead Progression Funnel
+              Data Progression Funnel
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -930,7 +930,7 @@ const LeadsPage = () => {
                     className="bg-blue-600 h-8 rounded-full flex items-center justify-center text-white text-sm font-medium"
                     style={{ width: "100%" }}
                   >
-                    Total Leads: {leads.length.toLocaleString()}
+                    Total Data: {leads.length.toLocaleString()}
                   </div>
                 </div>
               </div>
@@ -975,7 +975,7 @@ const LeadsPage = () => {
           <div className="w-full max-w-lg rounded-lg bg-white shadow-lg border border-gray-200">
             <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
               <h3 className="text-lg font-semibold" style={{ color: "#012970" }}>
-                Add Lead
+                Add Data
               </h3>
               <button
                 className="text-gray-500 hover:text-gray-700"
@@ -1063,7 +1063,7 @@ const LeadsPage = () => {
                   Cancel
                 </Button>
                 <Button type="submit" className="text-white font-medium" style={{ backgroundColor: "#1e3a8a" }}>
-                  Save Lead
+                  Save Data
                 </Button>
               </div>
             </form>

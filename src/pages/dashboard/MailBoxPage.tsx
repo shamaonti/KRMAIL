@@ -5,12 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
-import {
-  Search,
-  Mail,
-  Reply,
-  RefreshCw
-} from "lucide-react";
+import { Search, Mail, Reply, RefreshCw } from "lucide-react";
 
 interface InboxEmail {
   id: number;
@@ -18,16 +13,22 @@ interface InboxEmail {
   subject: string;
   body: string;
   preview: string;
+  account_email?: string;
 }
 
+type GroupedEmails = {
+  [key: string]: InboxEmail[];
+};
+
 const MailBoxPage = () => {
-  const [emails, setEmails] = useState<InboxEmail[]>([]);
+  const [emails, setEmails] = useState<GroupedEmails>({});
   const [selectedEmail, setSelectedEmail] = useState<InboxEmail | null>(null);
   const [selectedEmails, setSelectedEmails] = useState<number[]>([]);
   const [replyMode, setReplyMode] = useState(false);
   const [replySubject, setReplySubject] = useState("");
   const [replyMessage, setReplyMessage] = useState("");
   const [loading, setLoading] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(5);
 
   const getCurrentUserId = () => {
     const user = JSON.parse(localStorage.getItem("user") || "{}");
@@ -35,12 +36,14 @@ const MailBoxPage = () => {
   };
 
   const userId = getCurrentUserId();
+
   // ==========================
-  // FETCH INBOX (SESSION USER)
+  // FETCH INBOX
   // ==========================
   const fetchInboxEmails = async () => {
     try {
       setLoading(true);
+      setVisibleCount(5);
 
       const res = await fetch(
         `http://localhost:3001/api/mailbox/inbox/${userId}`
@@ -48,7 +51,7 @@ const MailBoxPage = () => {
 
       const data = await res.json();
       if (data.success) {
-        setEmails(data.data);
+        setEmails(data.data || {});
       }
     } catch (err) {
       console.error("Inbox fetch error", err);
@@ -65,42 +68,40 @@ const MailBoxPage = () => {
   // SEND REPLY
   // ==========================
   const sendReply = async () => {
-  if (!replyMessage || !selectedEmail) return;
+    if (!replyMessage || !selectedEmail) return;
 
-  try {
-    const res = await fetch(
-      `http://localhost:3001/api/mailbox/reply/${userId}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          inboxEmailId: selectedEmail.id,
-          to: selectedEmail.from_email,
-          subject: replySubject || `Re: ${selectedEmail.subject}`,
-          message: replyMessage
-        })
+    try {
+      const res = await fetch(
+        `http://localhost:3001/api/mailbox/reply/${userId}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            inboxEmailId: selectedEmail.id,
+            to: selectedEmail.from_email,
+            subject: replySubject || `Re: ${selectedEmail.subject}`,
+            message: replyMessage
+          })
+        }
+      );
+
+      const result = await res.json();
+      if (result.success) {
+        alert("Reply sent successfully");
+        setReplyMode(false);
+        setReplyMessage("");
       }
-    );
-
-    const result = await res.json();
-    if (result.success) {
-      alert("Reply sent successfully");
-      setReplyMode(false);
-      setReplyMessage("");
+    } catch (err) {
+      console.error("Reply error", err);
     }
-  } catch (err) {
-    console.error("Reply error", err);
-  }
-};
+  };
 
   return (
     <>
       {/* HEADER */}
       <header className="bg-white border-b">
         <div className="p-4 flex justify-between">
-          <h2 className="text-xl font-semibold text-[#012970]">
-            Mail Box
-          </h2>
+          <h2 className="text-xl font-semibold text-[#012970]">Mail Box</h2>
           <Button variant="outline" onClick={fetchInboxEmails}>
             <RefreshCw className="mr-2 h-4 w-4" />
             Refresh
@@ -110,7 +111,7 @@ const MailBoxPage = () => {
 
       <main className="p-6 grid grid-cols-3 gap-6">
         {/* ================= EMAIL LIST ================= */}
-        <Card className="col-span-1">
+        <Card className="col-span-1 overflow-hidden">
           <CardHeader>
             <div className="relative">
               <Search className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
@@ -118,43 +119,73 @@ const MailBoxPage = () => {
             </div>
           </CardHeader>
 
-          <CardContent className="p-0">
-            {loading && (
-              <p className="p-4 text-gray-500">Loading...</p>
-            )}
+          <CardContent className="p-0 h-[75vh] overflow-y-auto">
+            {loading && <p className="p-4 text-gray-500">Loading...</p>}
 
-            {emails.map((email) => (
-              <div
-                key={email.id}
-                className={`p-4 border-b cursor-pointer ${
-                  selectedEmail?.id === email.id ? "bg-blue-50" : ""
-                }`}
-                onClick={() => {
-                  setSelectedEmail(email);
-                  setReplySubject(`Re: ${email.subject}`);
-                }}
-              >
-                <div className="flex gap-2">
-                  <Checkbox
-                    checked={selectedEmails.includes(email.id)}
-                    onCheckedChange={(checked) =>
-                      checked
-                        ? setSelectedEmails([...selectedEmails, email.id])
-                        : setSelectedEmails(
-                            selectedEmails.filter((id) => id !== email.id)
-                          )
-                    }
-                  />
-                  <div>
-                    <p className="font-medium">{email.from_email}</p>
-                    <p className="text-sm">{email.subject}</p>
-                    <p className="text-xs text-gray-500">
-                      {email.preview}
-                    </p>
+            {Object.entries(emails).map(([account, mails]) => {
+              const safeAccount = account || "Unknown Account";
+
+              return (
+                <div key={safeAccount}>
+                  {/* ACCOUNT HEADER */}
+                  <div className="bg-gray-100 px-4 py-2 font-semibold text-sm sticky top-0 z-10">
+                    {safeAccount}
                   </div>
+
+                  {mails.slice(0, visibleCount).map((email) => (
+                    <div
+                      key={email.id}
+                      className={`p-4 border-b cursor-pointer ${
+                        selectedEmail?.id === email.id ? "bg-blue-50" : ""
+                      }`}
+                      onClick={() => {
+                        setSelectedEmail(email);
+                        setReplySubject(`Re: ${email.subject}`);
+                      }}
+                    >
+                      <div className="flex gap-2">
+                        <Checkbox
+                          checked={selectedEmails.includes(email.id)}
+                          onCheckedChange={(checked) =>
+                            checked
+                              ? setSelectedEmails([
+                                  ...selectedEmails,
+                                  email.id
+                                ])
+                              : setSelectedEmails(
+                                  selectedEmails.filter(
+                                    (id) => id !== email.id
+                                  )
+                                )
+                          }
+                        />
+                        <div>
+                          <p className="font-medium">{email.from_email}</p>
+                          <p className="text-sm">{email.subject}</p>
+                          <p className="text-xs text-gray-500">
+                            {email.preview}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+
+                  {mails.length > visibleCount && (
+                    <div className="p-3 text-center">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() =>
+                          setVisibleCount((v) => v + 5)
+                        }
+                      >
+                        Load More
+                      </Button>
+                    </div>
+                  )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </CardContent>
         </Card>
 
