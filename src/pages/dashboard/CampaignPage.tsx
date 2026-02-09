@@ -239,6 +239,11 @@ const CampaignPage = () => {
 
   const handleSendCampaign = async (campaign: Campaign) => {
       try {
+
+         if (!campaign.id || isNaN(Number(campaign.id))) {
+    setErrors(["Invalid campaign ID"]);
+    return;
+  }
         setSendingCampaignId(campaign.id);
         setIsSending(true);
         setErrors([]);

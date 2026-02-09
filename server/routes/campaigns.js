@@ -258,15 +258,24 @@ router.get("/:id", async (req, res) => {
 // mail send endpoint
 router.post("/:id/send", async (req, res) => {
   const conn = await db.getConnection();
+
   try {
-    const { id } = req.params;
+    const rawId = req.params.id;
+    const campaignId = Number(rawId);
 
-    console.log("➡️ SEND route hit:", id);   // ✅ LOG #1
+    // ✅ HARD GUARD
+    if (!Number.isInteger(campaignId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid campaign ID"
+      });
+    }
 
-    // 1️⃣ Campaign fetch
+    console.log("➡️ SEND route hit:", campaignId);
+
     const [campaignRows] = await conn.query(
       `SELECT * FROM email_campaigns WHERE id = ?`,
-      [id]
+      [campaignId]
     );
 
     if (!campaignRows.length) {
