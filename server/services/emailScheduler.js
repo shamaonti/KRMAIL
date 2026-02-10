@@ -3,10 +3,12 @@ require("dotenv").config({ path: path.join(__dirname, "../.env") });
 const cron = require("node-cron");
 const db = require("../db");
 const { createTransporter } = require("../helpers/mailer");
+const { sign } = require("../helpers/unsubscribeToken");
 
 /**
  * EMAIL SCHEDULER SERVICE
  * Sends scheduled campaigns using ALL sender accounts (round-robin)
+ * ✅ Global unsubscribe safe (once unsubscribed = never email again)
  */
 
 class EmailScheduler {
@@ -18,13 +20,12 @@ class EmailScheduler {
       totalProcessed: 0,
       totalSent: 0,
       totalFailed: 0,
-      lastRunTime: null
+      lastRunTime: null,
     };
   }
 
   start() {
     if (this.cronJob) return;
-
     console.log("📅 Email Scheduler started");
 
     this.cronJob = cron.schedule("* * * * *", async () => {
@@ -32,6 +33,45 @@ class EmailScheduler {
         await this.checkAndSendScheduledCampaigns();
       }
     });
+  }
+
+  pause() { this.isPaused = true; }
+  resume() { this.isPaused = false; }
+
+  stop() {
+    if (this.cronJob) {
+      this.cronJob.stop();
+      this.cronJob = null;
+    }
+  }
+
+  async triggerManually() {
+    await this.checkAndSendScheduledCampaigns();
+  }
+
+  normalizeEmail(email) {
+    return String(email || "").trim().toLowerCase();
+  }
+
+  // {Name} & {{name}} support
+  mergePlaceholders(content, lead) {
+    let out = content;
+
+    const name = lead.name || "";
+    const email = lead.email || "";
+    const payload = lead.payload
+      ? (typeof lead.payload === "string" ? JSON.parse(lead.payload) : lead.payload)
+      : {};
+
+    const allFields = { name, email, Name: name, Email: email, ...payload };
+
+    for (const [key, value] of Object.entries(allFields)) {
+      const safe = String(value || "");
+      out = out.replace(new RegExp(`\\{\\{\\s*${key}\\s*\\}\\}`, "gi"), safe);
+      out = out.replace(new RegExp(`\\{\\s*${key}\\s*\\}`, "gi"), safe);
+    }
+
+    return out;
   }
 
   async checkAndSendScheduledCampaigns() {
@@ -44,11 +84,13 @@ class EmailScheduler {
       const [campaigns] = await conn.query(
         `SELECT * FROM email_campaigns
          WHERE status = 'scheduled'
-         AND scheduled_at <= NOW()
+           AND scheduled_at <= NOW()
          ORDER BY scheduled_at ASC`
       );
 
       if (!campaigns.length) return;
+
+      console.log(`\n🚀 ${campaigns.length} campaign(s) due — processing...`);
 
       for (const campaign of campaigns) {
         await this.sendCampaign(conn, campaign);
@@ -56,9 +98,9 @@ class EmailScheduler {
       }
 
       this.stats.lastRunTime = new Date();
-
     } catch (err) {
       console.error("❌ Scheduler error:", err);
+      this.stats.totalFailed++;
     } finally {
       conn.release();
       this.isProcessing = false;
@@ -66,136 +108,162 @@ class EmailScheduler {
   }
 
   async sendCampaign(conn, campaign) {
-    console.log(`\n📧 Campaign: ${campaign.name} (${campaign.id})`);
+    console.log(`\n📧 Campaign: "${campaign.name}" (id: ${campaign.id})`);
 
+    // 🔐 STEP 1: Mark unsubscribed users in campaign_data
     await conn.query(
-      `UPDATE email_campaigns SET status = 'sending' WHERE id = ?`,
-      [campaign.id]
+      `UPDATE campaign_data cd
+      JOIN unsubscribes u
+        ON LOWER(TRIM(u.email)) = LOWER(TRIM(cd.email))
+        AND u.user_id = ?
+      SET cd.status = 'unsubscribed'
+      WHERE cd.campaign_id = ?
+        AND cd.status = 'pending'`,
+      [campaign.user_id, campaign.id]
     );
 
-    const [leads] = await conn.query(
-      `SELECT email, name, payload FROM campaign_data WHERE campaign_id = ?`,
-      [campaign.id]
-    );
-
-    if (!leads.length) {
-      await conn.query(
-        `UPDATE email_campaigns SET status = 'failed' WHERE id = ?`,
-        [campaign.id]
-      );
-      return;
-    }
-
-    // 🔥 GET ALL EMAIL ACCOUNTS
-    const [emailAccounts] = await conn.query(
-      `SELECT
-         from_name,
-         from_email AS email,
-         smtp_username AS smtp_user,
-         smtp_password AS app_password,
-         smtp_host,
-         smtp_port,
-         smtp_security
-       FROM user_email_accounts
-       WHERE user_id = ?`,
-      [campaign.user_id]
-    );
-
-    if (!emailAccounts.length) {
-      throw new Error("No email accounts found");
-    }
-
-    console.log(`📮 Using ${emailAccounts.length} sender accounts`);
 
     let sentCount = 0;
     let failedCount = 0;
-    let accountIndex = 0;
+    let skippedUnsubCount = 0;
 
-    for (const lead of leads) {
-      const emailAccount = emailAccounts[accountIndex];
-      accountIndex = (accountIndex + 1) % emailAccounts.length;
+    try {
+      /**
+       * 🔐 GLOBAL UNSUBSCRIBE RULE
+       * If email exists in unsubscribes table for this user → DO NOT SEND
+       * Campaign id is ignored intentionally
+       */
+      const [leads] = await conn.query(
+        `SELECT cd.email, cd.name, cd.payload, cd.status
+         FROM campaign_data cd
+         LEFT JOIN unsubscribes u
+           ON LOWER(TRIM(u.email)) = LOWER(TRIM(cd.email))
+          AND u.user_id = ?
+         WHERE cd.campaign_id = ?
+           AND cd.status != 'unsubscribed'
+           AND u.id IS NULL`,
+        [campaign.user_id, campaign.id]
+      );
 
-      const transporter = createTransporter(emailAccount);
+      if (!leads.length) {
+        console.log("🚫 All leads unsubscribed or empty");
+        return;
+      }
 
-      try {
-        const [templates] = await conn.query(
-          `SELECT content FROM email_templates WHERE id = ?`,
-          [campaign.template_id]
-        );
+      const [emailAccounts] = await conn.query(
+        `SELECT
+           from_name,
+           from_email AS email,
+           smtp_username AS smtp_user,
+           smtp_password AS app_password,
+           smtp_host,
+           smtp_port,
+           smtp_security
+         FROM user_email_accounts
+         WHERE user_id = ?`,
+        [campaign.user_id]
+      );
 
-        let emailContent = templates[0]?.content || "";
+      if (!emailAccounts.length) {
+        console.error("❌ No email accounts for user:", campaign.user_id);
+        return;
+      }
 
-        emailContent = emailContent.replace(/\{\{email\}\}/gi, lead.email);
-        if (lead.name) {
-          emailContent = emailContent.replace(/\{\{name\}\}/gi, lead.name);
+      console.log(`📮 Using ${emailAccounts.length} sender account(s), ${leads.length} lead(s)`);
+
+      let accountIndex = 0;
+
+      const [templates] = await conn.query(
+        `SELECT content FROM email_templates WHERE id = ?`,
+        [campaign.template_id]
+      );
+      const templateContent = templates?.[0]?.content || "";
+
+      for (const lead of leads) {
+        const leadEmailNorm = this.normalizeEmail(lead.email);
+
+        if ((lead.status || "").toLowerCase() === "unsubscribed") {
+          skippedUnsubCount++;
+          continue;
         }
 
-        const trackingPixel = `
-          <img src="${process.env.APP_URL}/api/track/open?cid=${campaign.id}&email=${encodeURIComponent(
-            lead.email
-          )}&t=${Date.now()}"
-          width="1" height="1" style="display:none" />
-        `;
+        const emailAccount = emailAccounts[accountIndex];
+        accountIndex = (accountIndex + 1) % emailAccounts.length;
+        const transporter = createTransporter(emailAccount);
 
-        emailContent = emailContent.includes("</body>")
-          ? emailContent.replace("</body>", `${trackingPixel}</body>`)
-          : emailContent + trackingPixel;
+        try {
+          let emailContent = this.mergePlaceholders(templateContent, lead);
 
-        await transporter.sendMail({
-          from: `"${emailAccount.from_name || "Campaign"}" <${emailAccount.email}>`,
-          to: lead.email,
-          subject: campaign.subject,
-          html: emailContent
-        });
+          const trackingPixel = `<img src="${process.env.APP_URL}/api/track/open?cid=${campaign.id}&email=${encodeURIComponent(lead.email)}&t=${Date.now()}" width="1" height="1" style="display:none" />`;
+          emailContent += trackingPixel;
 
-        await conn.query(
-          `UPDATE campaign_data
-           SET status = 'sent',
-               sent_at = NOW(),
-               sent_from_email = ?
-           WHERE campaign_id = ? AND email = ?`,
-          [emailAccount.email, campaign.id, lead.email]
-        );
+          const token = sign({
+            email: leadEmailNorm,
+            userId: campaign.user_id,
+            campaignId: campaign.id,
+            scope: "all",
+            exp: Date.now() + 365 * 24 * 60 * 60 * 1000,
+          });
 
-        sentCount++;
-        this.stats.totalSent++;
+          emailContent += `
+            <hr/>
+            <p style="font-size:12px;color:#666">
+              Don't want these emails?
+              <a href="${process.env.APP_URL}/unsubscribe?token=${token}">Unsubscribe</a>
+            </p>`;
 
-        console.log(`✅ ${lead.email} ← ${emailAccount.email}`);
+          await transporter.sendMail({
+            from: `"${emailAccount.from_name || "Campaign"}" <${emailAccount.email}>`,
+            to: lead.email,
+            subject: campaign.subject,
+            html: emailContent,
+          });
 
-        await this.delay(200);
+          await conn.query(
+            `UPDATE campaign_data
+             SET status = 'sent', sent_at = NOW(), sent_from_email = ?
+             WHERE campaign_id = ? AND LOWER(TRIM(email)) = ?`,
+            [emailAccount.email, campaign.id, leadEmailNorm]
+          );
 
-      } catch (err) {
-        failedCount++;
-        this.stats.totalFailed++;
-
-        await conn.query(
-          `UPDATE campaign_data
-           SET status = 'failed',
-               error_message = ?,
-               sent_from_email = ?
-           WHERE campaign_id = ? AND email = ?`,
-          [err.message, emailAccount.email, campaign.id, lead.email]
-        );
-
-        console.error(`❌ ${lead.email} via ${emailAccount.email}`);
+          sentCount++;
+          console.log(`✅ ${lead.email} ← ${emailAccount.email}`);
+          await this.delay(200);
+        } catch (err) {
+          failedCount++;
+          await conn.query(
+            `UPDATE campaign_data
+             SET status = 'failed', error_message = ?, sent_from_email = ?
+             WHERE campaign_id = ? AND LOWER(TRIM(email)) = ?`,
+            [String(err?.message || err), emailAccount.email, campaign.id, leadEmailNorm]
+          );
+          console.error(`❌ ${lead.email}:`, err?.message || err);
+        }
       }
+
+      await conn.query(
+        `UPDATE email_campaigns
+         SET status = 'sent',
+             sent_count = ?,
+             failed_count = ?,
+             completed_at = NOW(),
+             updated_at = NOW()
+         WHERE id = ?`,
+        [sentCount, failedCount, campaign.id]
+      );
+
+      console.log(`🎉 Done → Sent: ${sentCount}, Failed: ${failedCount}, Skipped (unsub): ${skippedUnsubCount}`);
+    } catch (err) {
+      console.error("❌ sendCampaign crash:", err);
+      await conn.query(
+        `UPDATE email_campaigns SET status = 'failed', updated_at = NOW() WHERE id = ?`,
+        [campaign.id]
+      );
     }
-
-    await conn.query(
-      `UPDATE email_campaigns
-       SET status = 'sent',
-           sent_count = ?,
-           failed_count = ?,
-           completed_at = NOW()
-       WHERE id = ?`,
-      [sentCount, failedCount, campaign.id]
-    );
-
-    console.log(`🎉 Campaign done → Sent: ${sentCount}, Failed: ${failedCount}`);
   }
 
   delay(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 }
 

@@ -89,6 +89,8 @@ app.use("/api/dashboard", require("./routes/dashboard"));
 
 require("./services/imapCron");
 
+// ✅ FIX: Unsubscribe route — /unsubscribe?token=... (ngrok se bhi kaam karega)
+app.use('/unsubscribe',        require('./routes/unsubscribe'));
 /* ✅ SCHEDULER API ENDPOINTS (OPTIONAL - FOR MONITORING) */
 app.get('/api/scheduler/status', (req, res) => {
   res.json({
