@@ -57,6 +57,29 @@ interface Campaign {
 
 const API_BASE_URL = 'http://localhost:3001';
 
+// ✅ FIX: datetime-local value → "YYYY-MM-DD HH:MM:SS" (DB format, IST as-is)
+// Browser ka datetime-local value already LOCAL time mein hota hai
+// Isko as-is DB mein bhejo — convert MAT karo
+function toDbDatetime(localVal: string): string {
+  if (!localVal) return "";
+  // "2026-02-10T10:11" → "2026-02-10 10:11:00"
+  return localVal.replace("T", " ") + ":00";
+}
+
+// ✅ FIX: DB se aaya datetime display ke liye
+function formatDisplay(dt: string | undefined): string {
+  if (!dt) return "-";
+  return new Date(dt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
+}
+
+// ✅ FIX: datetime-local input ka min value (local time mein)
+function localDatetimeMin(): string {
+  const now = new Date();
+  // Local time string for datetime-local input
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+}
+
 const CampaignPage = () => {
   const [campaignName, setCampaignName] = useState('');
   const [emailSubject, setEmailSubject] = useState('');
@@ -88,6 +111,9 @@ const CampaignPage = () => {
   // Schedule settings
   const [scheduleAt, setScheduleAt] = useState('');
   const [sendingCampaignId, setSendingCampaignId] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [searchQuery, setSearchQuery] = useState('');
+  const PAGE_SIZE = 10;
 
   const getCurrentUserId = () => {
     const user = JSON.parse(localStorage.getItem('user') || '{}');
@@ -190,7 +216,8 @@ const CampaignPage = () => {
         templateId: selectedTemplate.id,
         template: selectedTemplate,
         leads,
-        runAt: scheduleAt || null,
+        // ✅ FIX: scheduleAt ko DB format mein bhejo (IST as-is, no UTC conversion)
+        runAt: scheduleAt ? toDbDatetime(scheduleAt) : null,
         settings: { timezone, sendingHours, abTesting, delayBetweenEmails },
         followupSettings: followupEnabled ? {
           enabled: followupEnabled,
@@ -219,15 +246,19 @@ const CampaignPage = () => {
           subject: emailSubject,
           template: selectedTemplate,
           leads,
-          status: 'draft',
+          status: scheduleAt ? 'scheduled' : 'draft',
           createdAt: new Date().toISOString(),
           settings: campaignData.settings,
           followupSettings: campaignData.followupSettings
         };
         setCurrentCampaign(newCampaign);
         await loadCampaigns();
-        setSuccessMessage('Campaign saved to database successfully!');
-        setTimeout(() => setSuccessMessage(''), 3000);
+        setSuccessMessage(
+          scheduleAt
+            ? `Campaign scheduled for ${formatDisplay(toDbDatetime(scheduleAt))}`
+            : 'Campaign saved to database successfully!'
+        );
+        setTimeout(() => setSuccessMessage(''), 4000);
       } else {
         setErrors([data.message || 'Failed to save campaign']);
       }
@@ -238,36 +269,39 @@ const CampaignPage = () => {
   };
 
   const handleSendCampaign = async (campaign: Campaign) => {
-      try {
-        setSendingCampaignId(campaign.id);
-        setIsSending(true);
-        setErrors([]);
-
-        const res = await fetch(
-          `${API_BASE_URL}/api/campaigns/${campaign.id}/send`,
-          { method: "POST" }
-        );
-
-        const data = await res.json();
-
-        if (!data.success) {
-          throw new Error(data.message);
-        }
-
-        await loadCampaigns();
-
-        setSuccessMessage(
-          `Campaign "${campaign.name}" sent successfully (${data.sentCount})`
-        );
-      } catch (err) {
-        setErrors([err instanceof Error ? err.message : "Send failed"]);
-      } finally {
-        setIsSending(false);
-        setSendingCampaignId(null);
-        setSendingProgress(0);
+    try {
+      if (!campaign.id || isNaN(Number(campaign.id))) {
+        setErrors(["Invalid campaign ID"]);
+        return;
       }
-  };
+      setSendingCampaignId(campaign.id);
+      setIsSending(true);
+      setErrors([]);
 
+      const res = await fetch(
+        `${API_BASE_URL}/api/campaigns/${campaign.id}/send`,
+        { method: "POST" }
+      );
+
+      const data = await res.json();
+
+      if (!data.success) {
+        throw new Error(data.message);
+      }
+
+      await loadCampaigns();
+
+      setSuccessMessage(
+        `Campaign "${campaign.name}" sent successfully (${data.sentCount})`
+      );
+    } catch (err) {
+      setErrors([err instanceof Error ? err.message : "Send failed"]);
+    } finally {
+      setIsSending(false);
+      setSendingCampaignId(null);
+      setSendingProgress(0);
+    }
+  };
 
   const handlePreview = () => {
     if (!selectedTemplate) { setErrors(['Please select an email template to preview']); return; }
@@ -292,6 +326,19 @@ const CampaignPage = () => {
       setErrors([`Failed to delete: ${error instanceof Error ? error.message : 'Unknown error'}`]);
     }
   };
+
+  // Filter and paginate campaigns
+  const filteredCampaigns = campaigns.filter(c =>
+    c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    c.subject.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  const paginatedCampaigns = filteredCampaigns.slice(
+    (currentPage - 1) * PAGE_SIZE,
+    currentPage * PAGE_SIZE
+  );
+
+  const totalPages = Math.ceil(filteredCampaigns.length / PAGE_SIZE);
 
   return (
     <>
@@ -396,45 +443,37 @@ const CampaignPage = () => {
                     </SelectContent>
                   </Select>
                 </div>
-                 <div>
+                <div>
                   <Label>Schedule At (optional)</Label>
-                  <Input 
-                    type="datetime-local" 
-                    value={scheduleAt} 
+                  <Input
+                    type="datetime-local"
+                    value={scheduleAt}
                     onChange={(e) => setScheduleAt(e.target.value)}
-                    min={new Date().toISOString().slice(0, 16)}
+                    // ✅ FIX: min = local time (not UTC .toISOString())
+                    min={localDatetimeMin()}
                   />
                   <p className="text-xs text-muted-foreground mt-1">
-                    {scheduleAt ? `Will be sent at ${new Date(scheduleAt).toLocaleString()}` : 'Leave empty to save as draft and send manually'}
+                    {scheduleAt
+                      // ✅ FIX: display in IST, not UTC
+                      ? `Will be sent at ${formatDisplay(toDbDatetime(scheduleAt))}`
+                      : 'Leave empty to save as draft and send manually'}
                   </p>
                 </div>
-                 <div>
+                <div>
                   <Label>Upload Leads (CSV) * ({leads.length} leads)</Label>
                   <CSVUploader onLeadsUploaded={handleLeadsUploaded} existingLeads={leads} />
                 </div>
-                {currentCampaign && (
-                  <Card className="bg-green-50 border-green-200">
-                    <CardContent className="p-4">
-                      <div className="flex justify-between items-center">
-                        <div>
-                          <h4 className="font-medium text-green-800">{currentCampaign.name}</h4>
-                          <p className="text-sm text-green-600">
-                            {currentCampaign.leads?.length || 0} leads • {currentCampaign.status}
-                          </p>
-                        </div>
-                        <Badge>{currentCampaign.status}</Badge>
-                      </div>
-                    </CardContent>
-                  </Card>
-                )}
-               
+
+                {/* ✅ FIX: Duplicate card removed — sirf ek baar render hoga */}
                 {currentCampaign && (
                   <Card className="bg-green-50 border-green-200 dark:bg-green-900/20 dark:border-green-800">
                     <CardContent className="p-4">
                       <div className="flex justify-between items-center">
                         <div>
                           <h4 className="font-medium text-green-800 dark:text-green-200">{currentCampaign.name}</h4>
-                          <p className="text-sm text-green-600 dark:text-green-300">{currentCampaign.leads?.length || 0} leads • {currentCampaign.status}</p>
+                          <p className="text-sm text-green-600 dark:text-green-300">
+                            {currentCampaign.leads?.length || 0} leads • {currentCampaign.status}
+                          </p>
                         </div>
                         <Badge>{currentCampaign.status}</Badge>
                       </div>
@@ -458,6 +497,7 @@ const CampaignPage = () => {
                       <SelectItem value="EST">EST</SelectItem>
                       <SelectItem value="PST">PST</SelectItem>
                       <SelectItem value="GMT">GMT</SelectItem>
+                      <SelectItem value="IST">IST (India)</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -495,8 +535,8 @@ const CampaignPage = () => {
                       <div>
                         <Label>Follow-up Template</Label>
                         <Select onValueChange={(value) => {
-                          const selectedTemplate = templates.find(t => t.id.toString() === value);
-                          if (selectedTemplate) setFollowupTemplate(selectedTemplate);
+                          const tmpl = templates.find(t => t.id.toString() === value);
+                          if (tmpl) setFollowupTemplate(tmpl);
                         }}>
                           <SelectTrigger><SelectValue placeholder="Select follow-up template" /></SelectTrigger>
                           <SelectContent>
@@ -538,9 +578,20 @@ const CampaignPage = () => {
           <Card>
             <CardHeader className="flex flex-row items-center justify-between">
               <CardTitle>Database Campaigns</CardTitle>
-              <Button size="sm" variant="outline" onClick={loadCampaigns} disabled={isLoadingCampaigns}>
-                <RefreshCw className={`h-4 w-4 mr-2 ${isLoadingCampaigns ? "animate-spin" : ""}`} /> Reload
-              </Button>
+              <div className="flex gap-2">
+                <Input
+                  placeholder="Search campaigns..."
+                  value={searchQuery}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value);
+                    setCurrentPage(1);
+                  }}
+                  className="w-64"
+                />
+                <Button size="sm" variant="outline" onClick={loadCampaigns} disabled={isLoadingCampaigns}>
+                  <RefreshCw className={`h-4 w-4 mr-2 ${isLoadingCampaigns ? "animate-spin" : ""}`} /> Reload
+                </Button>
+              </div>
             </CardHeader>
             <CardContent>
               {isLoadingCampaigns ? (
@@ -551,81 +602,123 @@ const CampaignPage = () => {
               ) : campaigns.length === 0 ? (
                 <div className="text-center py-10 text-muted-foreground">No campaigns in database</div>
               ) : (
-                <div className="overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Campaign</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Scheduled At</TableHead>
-                        <TableHead className="text-center">Recipients</TableHead>
-                        <TableHead className="text-center">Sent</TableHead>
-                        <TableHead className="text-center">Opened</TableHead>
-                        <TableHead className="text-center">Clicked</TableHead>
-                        <TableHead>Created</TableHead>
-                        <TableHead className="w-32">Actions</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {campaigns.map((c) => (
-                        <TableRow key={c.id}>
-                          <TableCell>
-                            <div>
-                              <p className="font-medium">{c.name}</p>
-                              <p className="text-sm text-muted-foreground">{c.subject}</p>
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant={
-                              c.status === 'sent' ? 'default' : 
-                              c.status === 'scheduled' ? 'secondary' : 
-                              c.status === 'sending' ? 'destructive' : 'outline'
-                            }>
-                              {c.status}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            {c.scheduledAt ? (
-                              <span className="text-sm">{new Date(c.scheduledAt).toLocaleString()}</span>
-                            ) : (
-                              <span className="text-muted-foreground text-sm">-</span>
-                            )}
-                          </TableCell>
-                          <TableCell className="text-center">{c.totalRecipients ?? c.leads?.length ?? 0}</TableCell>
-                          <TableCell className="text-center">{c.sentCount ?? 0}</TableCell>
-                          <TableCell className="text-center">{c.openedCount ?? 0}</TableCell>
-                          <TableCell className="text-center">{c.clickedCount ?? 0}</TableCell>
-                          <TableCell>{new Date(c.createdAt).toLocaleDateString()}</TableCell>
-                          <TableCell>
-                            <div className="flex items-center gap-1">
-                              {(c.status === 'draft' || c.status === 'scheduled') && (
-                                <Button 
-                                  size="sm" 
-                                  variant="ghost" 
-                                  onClick={() => handleSendCampaign(c)} 
-                                  disabled={isSending && sendingCampaignId === c.id}
-                                  title="Send now"
-                                  className="text-primary hover:text-primary"
-                                >
-                                  {isSending && sendingCampaignId === c.id ? (
-                                    <Loader2 className="h-4 w-4 animate-spin" />
-                                  ) : (
-                                    <Send className="h-4 w-4" />
-                                  )}
-                                </Button>
-                              )}
-                              <Button size="sm" variant="ghost" onClick={() => navigate(`/dashboard/campaign-result/${c.id}`)} title="View results">
-                                <Eye className="h-4 w-4" />
-                              </Button>
-                              <Button size="sm" variant="ghost" onClick={() => handleDeleteCampaign(c.id)} disabled={c.status === "sending"} title="Delete">
-                                <Trash2 className="h-4 w-4 text-destructive" />
-                              </Button>
-                            </div>
-                          </TableCell>
+                <div className="space-y-4">
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Campaign</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead>Scheduled At</TableHead>
+                          <TableHead className="text-center">Recipients</TableHead>
+                          <TableHead className="text-center">Sent</TableHead>
+                          <TableHead className="text-center">Opened</TableHead>
+                          <TableHead className="text-center">Clicked</TableHead>
+                          <TableHead>Created</TableHead>
+                          <TableHead className="w-32">Actions</TableHead>
                         </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                      </TableHeader>
+                      <TableBody>
+                        {paginatedCampaigns.map((c) => (
+                          <TableRow key={c.id}>
+                            <TableCell>
+                              <div>
+                                <p className="font-medium">{c.name}</p>
+                                <p className="text-sm text-muted-foreground">{c.subject}</p>
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant={
+                                c.status === 'sent'      ? 'default'     :
+                                c.status === 'scheduled' ? 'secondary'   :
+                                c.status === 'sending'   ? 'destructive' : 'outline'
+                              }>
+                                {c.status}
+                              </Badge>
+                            </TableCell>
+                            <TableCell>
+                              {/* ✅ FIX: IST mein display */}
+                              {c.scheduledAt
+                                ? <span className="text-sm">{formatDisplay(c.scheduledAt)}</span>
+                                : <span className="text-muted-foreground text-sm">-</span>
+                              }
+                            </TableCell>
+                            <TableCell className="text-center">{c.totalRecipients ?? c.leads?.length ?? 0}</TableCell>
+                            <TableCell className="text-center">{c.sentCount ?? 0}</TableCell>
+                            <TableCell className="text-center">{c.openedCount ?? 0}</TableCell>
+                            <TableCell className="text-center">{c.clickedCount ?? 0}</TableCell>
+                            <TableCell>{new Date(c.createdAt).toLocaleDateString("en-IN")}</TableCell>
+                            <TableCell>
+                              <div className="flex items-center gap-1">
+                                {(c.status === 'draft' || c.status === 'scheduled') && (
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() => handleSendCampaign(c)}
+                                    disabled={isSending && sendingCampaignId === c.id}
+                                    title="Send now"
+                                    className="text-primary hover:text-primary"
+                                  >
+                                    {isSending && sendingCampaignId === c.id ? (
+                                      <Loader2 className="h-4 w-4 animate-spin" />
+                                    ) : (
+                                      <Send className="h-4 w-4" />
+                                    )}
+                                  </Button>
+                                )}
+                                <Button size="sm" variant="ghost" onClick={() => navigate(`/dashboard/campaign-result/${c.id}`)} title="View results">
+                                  <Eye className="h-4 w-4" />
+                                </Button>
+                                <Button size="sm" variant="ghost" onClick={() => handleDeleteCampaign(c.id)} disabled={c.status === "sending"} title="Delete">
+                                  <Trash2 className="h-4 w-4 text-destructive" />
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+
+                  {/* Pagination Controls */}
+                  {totalPages > 1 && (
+                    <div className="flex items-center justify-between pt-4 border-t">
+                      <div className="text-sm text-muted-foreground">
+                        Showing {((currentPage - 1) * PAGE_SIZE) + 1} to {Math.min(currentPage * PAGE_SIZE, filteredCampaigns.length)} of {filteredCampaigns.length} campaigns
+                      </div>
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                          disabled={currentPage === 1}
+                        >
+                          Previous
+                        </Button>
+                        <div className="flex items-center gap-1">
+                          {Array.from({ length: totalPages }, (_, i) => i + 1).map(page => (
+                            <Button
+                              key={page}
+                              size="sm"
+                              variant={currentPage === page ? 'default' : 'outline'}
+                              onClick={() => setCurrentPage(page)}
+                              className="min-w-10"
+                            >
+                              {page}
+                            </Button>
+                          ))}
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                          disabled={currentPage === totalPages}
+                        >
+                          Next
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </CardContent>
