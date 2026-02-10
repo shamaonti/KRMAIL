@@ -111,6 +111,9 @@ const CampaignPage = () => {
   // Schedule settings
   const [scheduleAt, setScheduleAt] = useState('');
   const [sendingCampaignId, setSendingCampaignId] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [searchQuery, setSearchQuery] = useState('');
+  const PAGE_SIZE = 10;
 
   const getCurrentUserId = () => {
     const user = JSON.parse(localStorage.getItem('user') || '{}');
@@ -323,6 +326,19 @@ const CampaignPage = () => {
       setErrors([`Failed to delete: ${error instanceof Error ? error.message : 'Unknown error'}`]);
     }
   };
+
+  // Filter and paginate campaigns
+  const filteredCampaigns = campaigns.filter(c =>
+    c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    c.subject.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  const paginatedCampaigns = filteredCampaigns.slice(
+    (currentPage - 1) * PAGE_SIZE,
+    currentPage * PAGE_SIZE
+  );
+
+  const totalPages = Math.ceil(filteredCampaigns.length / PAGE_SIZE);
 
   return (
     <>
@@ -562,9 +578,20 @@ const CampaignPage = () => {
           <Card>
             <CardHeader className="flex flex-row items-center justify-between">
               <CardTitle>Database Campaigns</CardTitle>
-              <Button size="sm" variant="outline" onClick={loadCampaigns} disabled={isLoadingCampaigns}>
-                <RefreshCw className={`h-4 w-4 mr-2 ${isLoadingCampaigns ? "animate-spin" : ""}`} /> Reload
-              </Button>
+              <div className="flex gap-2">
+                <Input
+                  placeholder="Search campaigns..."
+                  value={searchQuery}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value);
+                    setCurrentPage(1);
+                  }}
+                  className="w-64"
+                />
+                <Button size="sm" variant="outline" onClick={loadCampaigns} disabled={isLoadingCampaigns}>
+                  <RefreshCw className={`h-4 w-4 mr-2 ${isLoadingCampaigns ? "animate-spin" : ""}`} /> Reload
+                </Button>
+              </div>
             </CardHeader>
             <CardContent>
               {isLoadingCampaigns ? (
@@ -575,81 +602,123 @@ const CampaignPage = () => {
               ) : campaigns.length === 0 ? (
                 <div className="text-center py-10 text-muted-foreground">No campaigns in database</div>
               ) : (
-                <div className="overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Campaign</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Scheduled At</TableHead>
-                        <TableHead className="text-center">Recipients</TableHead>
-                        <TableHead className="text-center">Sent</TableHead>
-                        <TableHead className="text-center">Opened</TableHead>
-                        <TableHead className="text-center">Clicked</TableHead>
-                        <TableHead>Created</TableHead>
-                        <TableHead className="w-32">Actions</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {campaigns.map((c) => (
-                        <TableRow key={c.id}>
-                          <TableCell>
-                            <div>
-                              <p className="font-medium">{c.name}</p>
-                              <p className="text-sm text-muted-foreground">{c.subject}</p>
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant={
-                              c.status === 'sent'      ? 'default'     :
-                              c.status === 'scheduled' ? 'secondary'   :
-                              c.status === 'sending'   ? 'destructive' : 'outline'
-                            }>
-                              {c.status}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            {/* ✅ FIX: IST mein display */}
-                            {c.scheduledAt
-                              ? <span className="text-sm">{formatDisplay(c.scheduledAt)}</span>
-                              : <span className="text-muted-foreground text-sm">-</span>
-                            }
-                          </TableCell>
-                          <TableCell className="text-center">{c.totalRecipients ?? c.leads?.length ?? 0}</TableCell>
-                          <TableCell className="text-center">{c.sentCount ?? 0}</TableCell>
-                          <TableCell className="text-center">{c.openedCount ?? 0}</TableCell>
-                          <TableCell className="text-center">{c.clickedCount ?? 0}</TableCell>
-                          <TableCell>{new Date(c.createdAt).toLocaleDateString("en-IN")}</TableCell>
-                          <TableCell>
-                            <div className="flex items-center gap-1">
-                              {(c.status === 'draft' || c.status === 'scheduled') && (
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  onClick={() => handleSendCampaign(c)}
-                                  disabled={isSending && sendingCampaignId === c.id}
-                                  title="Send now"
-                                  className="text-primary hover:text-primary"
-                                >
-                                  {isSending && sendingCampaignId === c.id ? (
-                                    <Loader2 className="h-4 w-4 animate-spin" />
-                                  ) : (
-                                    <Send className="h-4 w-4" />
-                                  )}
-                                </Button>
-                              )}
-                              <Button size="sm" variant="ghost" onClick={() => navigate(`/dashboard/campaign-result/${c.id}`)} title="View results">
-                                <Eye className="h-4 w-4" />
-                              </Button>
-                              <Button size="sm" variant="ghost" onClick={() => handleDeleteCampaign(c.id)} disabled={c.status === "sending"} title="Delete">
-                                <Trash2 className="h-4 w-4 text-destructive" />
-                              </Button>
-                            </div>
-                          </TableCell>
+                <div className="space-y-4">
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Campaign</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead>Scheduled At</TableHead>
+                          <TableHead className="text-center">Recipients</TableHead>
+                          <TableHead className="text-center">Sent</TableHead>
+                          <TableHead className="text-center">Opened</TableHead>
+                          <TableHead className="text-center">Clicked</TableHead>
+                          <TableHead>Created</TableHead>
+                          <TableHead className="w-32">Actions</TableHead>
                         </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                      </TableHeader>
+                      <TableBody>
+                        {paginatedCampaigns.map((c) => (
+                          <TableRow key={c.id}>
+                            <TableCell>
+                              <div>
+                                <p className="font-medium">{c.name}</p>
+                                <p className="text-sm text-muted-foreground">{c.subject}</p>
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant={
+                                c.status === 'sent'      ? 'default'     :
+                                c.status === 'scheduled' ? 'secondary'   :
+                                c.status === 'sending'   ? 'destructive' : 'outline'
+                              }>
+                                {c.status}
+                              </Badge>
+                            </TableCell>
+                            <TableCell>
+                              {/* ✅ FIX: IST mein display */}
+                              {c.scheduledAt
+                                ? <span className="text-sm">{formatDisplay(c.scheduledAt)}</span>
+                                : <span className="text-muted-foreground text-sm">-</span>
+                              }
+                            </TableCell>
+                            <TableCell className="text-center">{c.totalRecipients ?? c.leads?.length ?? 0}</TableCell>
+                            <TableCell className="text-center">{c.sentCount ?? 0}</TableCell>
+                            <TableCell className="text-center">{c.openedCount ?? 0}</TableCell>
+                            <TableCell className="text-center">{c.clickedCount ?? 0}</TableCell>
+                            <TableCell>{new Date(c.createdAt).toLocaleDateString("en-IN")}</TableCell>
+                            <TableCell>
+                              <div className="flex items-center gap-1">
+                                {(c.status === 'draft' || c.status === 'scheduled') && (
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() => handleSendCampaign(c)}
+                                    disabled={isSending && sendingCampaignId === c.id}
+                                    title="Send now"
+                                    className="text-primary hover:text-primary"
+                                  >
+                                    {isSending && sendingCampaignId === c.id ? (
+                                      <Loader2 className="h-4 w-4 animate-spin" />
+                                    ) : (
+                                      <Send className="h-4 w-4" />
+                                    )}
+                                  </Button>
+                                )}
+                                <Button size="sm" variant="ghost" onClick={() => navigate(`/dashboard/campaign-result/${c.id}`)} title="View results">
+                                  <Eye className="h-4 w-4" />
+                                </Button>
+                                <Button size="sm" variant="ghost" onClick={() => handleDeleteCampaign(c.id)} disabled={c.status === "sending"} title="Delete">
+                                  <Trash2 className="h-4 w-4 text-destructive" />
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+
+                  {/* Pagination Controls */}
+                  {totalPages > 1 && (
+                    <div className="flex items-center justify-between pt-4 border-t">
+                      <div className="text-sm text-muted-foreground">
+                        Showing {((currentPage - 1) * PAGE_SIZE) + 1} to {Math.min(currentPage * PAGE_SIZE, filteredCampaigns.length)} of {filteredCampaigns.length} campaigns
+                      </div>
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                          disabled={currentPage === 1}
+                        >
+                          Previous
+                        </Button>
+                        <div className="flex items-center gap-1">
+                          {Array.from({ length: totalPages }, (_, i) => i + 1).map(page => (
+                            <Button
+                              key={page}
+                              size="sm"
+                              variant={currentPage === page ? 'default' : 'outline'}
+                              onClick={() => setCurrentPage(page)}
+                              className="min-w-10"
+                            >
+                              {page}
+                            </Button>
+                          ))}
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                          disabled={currentPage === totalPages}
+                        >
+                          Next
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </CardContent>

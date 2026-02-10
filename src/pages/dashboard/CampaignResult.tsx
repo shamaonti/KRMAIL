@@ -36,6 +36,7 @@ interface Campaign {
   openedCount: number;
   clickedCount: number;
   bouncedCount: number;
+  unsubscribedCount: number;
   scheduledAt?: string;
   createdAt: string;
   hasFollowup?: boolean;
@@ -94,6 +95,10 @@ const CampaignResult = () => {
 
   const bounceRate = campaign && campaign.sentCount > 0
     ? ((campaign.bouncedCount / campaign.sentCount) * 100).toFixed(1)
+    : '0.0';
+
+  const unsubRate = campaign && campaign.sentCount > 0
+    ? ((campaign.unsubscribedCount / campaign.sentCount) * 100).toFixed(1)
     : '0.0';
 
   const deliveryRate = campaign && campaign.totalRecipients > 0
@@ -331,7 +336,33 @@ const CampaignResult = () => {
               </div>
             </CardContent>
           </Card>
+
+          {/* Unsubscribed */}
+          <Card className="relative overflow-hidden">
+            <CardContent className="p-6">
+              <div className="flex items-start justify-between">
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Unsubscribed</p>
+                  <h3 className="text-3xl font-bold mt-2 text-foreground">{campaign.unsubscribedCount}</h3>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    {unsubRate}% unsubscribe rate
+                  </p>
+                </div>
+                <div className="p-3 rounded-full bg-red-100 dark:bg-red-900/30">
+                  <AlertTriangle className="h-6 w-6 text-red-600 dark:text-red-400" />
+                </div>
+              </div>
+              <div className="mt-4">
+                <div className="flex justify-between text-sm mb-1">
+                  <span className="text-muted-foreground">Unsubscribe Rate</span>
+                  <span className="font-medium text-red-600">{unsubRate}%</span>
+                </div>
+                <Progress value={parseFloat(unsubRate)} className="h-2 [&>div]:bg-red-500" />
+              </div>
+            </CardContent>
+          </Card>
         </div>
+        
 
         {/* Performance Summary */}
         <Card>

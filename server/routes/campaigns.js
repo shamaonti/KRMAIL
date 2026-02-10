@@ -102,7 +102,7 @@ router.get("/", async (req, res) => {
     const rows = await q(
       `SELECT id, user_id, name, subject, status,
               total_recipients, sent_count,
-              opened_count, clicked_count, bounced_count,
+              opened_count, clicked_count, bounced_count, unsubscribed_count,
               scheduled_at, created_at
        FROM email_campaigns
        WHERE user_id = ?
@@ -123,6 +123,7 @@ router.get("/", async (req, res) => {
         openedCount:      r.opened_count,
         clickedCount:     r.clicked_count,
         bouncedCount:     r.bounced_count,
+        unsubscribedCount: r.unsubscribed_count,
         scheduledAt:      r.scheduled_at,
         createdAt:        r.created_at,
       })),
@@ -141,7 +142,7 @@ router.get("/", async (req, res) => {
 router.put("/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const { status, sentCount, openedCount, clickedCount, bouncedCount } = req.body;
+    const { status, sentCount, openedCount, clickedCount, bouncedCount, unsubscribedCount } = req.body;
 
     await db.query(
       `UPDATE email_campaigns
@@ -150,9 +151,10 @@ router.put("/:id", async (req, res) => {
            opened_count  = COALESCE(?, opened_count),
            clicked_count = COALESCE(?, clicked_count),
            bounced_count = COALESCE(?, bounced_count),
+           unsubscribed_count = COALESCE(?, unsubscribed_count),
            updated_at    = NOW()
        WHERE id = ?`,
-      [status, sentCount, openedCount, clickedCount, bouncedCount, id]
+      [status, sentCount, openedCount, clickedCount, bouncedCount, unsubscribedCount, id]
     );
 
     res.json({ success: true });
@@ -188,7 +190,7 @@ router.get("/:id", async (req, res) => {
       `SELECT
          id, user_id, name, subject, content, template_id,
          status, total_recipients, sent_count, opened_count,
-         clicked_count, bounced_count, scheduled_at, created_at,
+         clicked_count, bounced_count, unsubscribed_count, scheduled_at, created_at,
          has_followup, followup_template_id, followup_subject,
          followup_delay_hours, followup_condition
        FROM email_campaigns
@@ -216,6 +218,7 @@ router.get("/:id", async (req, res) => {
         openedCount:         c.opened_count,
         clickedCount:        c.clicked_count,
         bouncedCount:        c.bounced_count,
+        unsubscribedCount:   c.unsubscribed_count,
         scheduledAt:         c.scheduled_at,
         createdAt:           c.created_at,
         hasFollowup:         c.has_followup,
