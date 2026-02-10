@@ -4,7 +4,6 @@ const db = require("../db");
 const { getLatestEmailAccount } = require("../helpers/emailAccount");
 const { createTransporter } = require("../helpers/mailer");
 
-
 // helper (SELECT only)
 async function q(sql, params = []) {
   const [rows] = await db.query(sql, params);
@@ -16,9 +15,9 @@ async function q(sql, params = []) {
  * POST /api/campaigns
  */
 router.post("/", async (req, res) => {
-  const conn = await db.getConnection(); // ✅ IMPORTANT
+  const conn = await db.getConnection();
   try {
-    await conn.beginTransaction(); // ✅ START TRANSACTION
+    await conn.beginTransaction();
 
     const {
       userId,
@@ -28,7 +27,7 @@ router.post("/", async (req, res) => {
       template,
       leads,
       followupSettings,
-      runAt
+      runAt,
     } = req.body;
 
     if (!userId || !name || !subject || !template || !Array.isArray(leads)) {
@@ -37,6 +36,8 @@ router.post("/", async (req, res) => {
 
     const hasFollowup = followupSettings ? 1 : 0;
 
+    // ✅ FIX: runAt frontend se IST mein aata hai
+    // DB ka NOW() bhi IST mein hai — isliye direct store karo, convert mat karo
     const [result] = await conn.query(
       `INSERT INTO email_campaigns
        (user_id, name, subject, content, template_id,
@@ -51,48 +52,44 @@ router.post("/", async (req, res) => {
         template.content || "",
         templateId || null,
         runAt ? "scheduled" : "draft",
-        runAt || null,
+        runAt || null,                    // frontend ka time as-is store karo
         leads.length,
         hasFollowup,
         followupSettings?.templateId || null,
-        followupSettings?.subject || null,
-        followupSettings?.delayHours || 24,
-        followupSettings?.condition || "not_opened"
+        followupSettings?.subject     || null,
+        followupSettings?.delayHours  || 24,
+        followupSettings?.condition   || "not_opened",
       ]
     );
 
     const campaignId = result.insertId;
 
-    // ✅ INSERT LEADS INTO campaign_data
-    const values = leads.map(l => [
+    // Insert leads
+    const values = leads.map((l) => [
       campaignId,
       l.email,
       l.name || null,
-      JSON.stringify(l)
+      JSON.stringify(l),
     ]);
 
     await conn.query(
-      `INSERT IGNORE INTO campaign_data
-       (campaign_id, email, name, payload)
-       VALUES ?`,
+      `INSERT IGNORE INTO campaign_data (campaign_id, email, name, payload) VALUES ?`,
       [values]
     );
 
-    await conn.commit(); // ✅ SAVE EVERYTHING
+    await conn.commit();
 
-    res.status(201).json({
-      success: true,
-      campaignId
-    });
+    res.status(201).json({ success: true, campaignId });
 
   } catch (err) {
-    await conn.rollback(); // ✅ SAFETY
+    await conn.rollback();
     console.error("Create campaign error:", err);
     res.status(500).json({ success: false, message: err.message });
   } finally {
-    conn.release(); // ✅ VERY IMPORTANT
+    conn.release();
   }
 });
+
 /**
  * GET ALL CAMPAIGNS
  * GET /api/campaigns?userId=1
@@ -115,20 +112,20 @@ router.get("/", async (req, res) => {
 
     res.json({
       success: true,
-      data: rows.map(r => ({
-        id: r.id,
-        userId: r.user_id,
-        name: r.name,
-        subject: r.subject,
-        status: r.status,
-        totalRecipients: r.total_recipients,
-        sentCount: r.sent_count,
-        openedCount: r.opened_count,
-        clickedCount: r.clicked_count,
-        bouncedCount: r.bounced_count,
-        scheduledAt: r.scheduled_at,
-        createdAt: r.created_at
-      }))
+      data: rows.map((r) => ({
+        id:               r.id,
+        userId:           r.user_id,
+        name:             r.name,
+        subject:          r.subject,
+        status:           r.status,
+        totalRecipients:  r.total_recipients,
+        sentCount:        r.sent_count,
+        openedCount:      r.opened_count,
+        clickedCount:     r.clicked_count,
+        bouncedCount:     r.bounced_count,
+        scheduledAt:      r.scheduled_at,
+        createdAt:        r.created_at,
+      })),
     });
 
   } catch (err) {
@@ -144,31 +141,18 @@ router.get("/", async (req, res) => {
 router.put("/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const {
-      status,
-      sentCount,
-      openedCount,
-      clickedCount,
-      bouncedCount
-    } = req.body;
+    const { status, sentCount, openedCount, clickedCount, bouncedCount } = req.body;
 
     await db.query(
       `UPDATE email_campaigns
-       SET status = COALESCE(?, status),
-           sent_count = COALESCE(?, sent_count),
-           opened_count = COALESCE(?, opened_count),
+       SET status        = COALESCE(?, status),
+           sent_count    = COALESCE(?, sent_count),
+           opened_count  = COALESCE(?, opened_count),
            clicked_count = COALESCE(?, clicked_count),
            bounced_count = COALESCE(?, bounced_count),
-           updated_at = NOW()
+           updated_at    = NOW()
        WHERE id = ?`,
-      [
-        status,
-        sentCount,
-        openedCount,
-        clickedCount,
-        bouncedCount,
-        id
-      ]
+      [status, sentCount, openedCount, clickedCount, bouncedCount, id]
     );
 
     res.json({ success: true });
@@ -199,51 +183,47 @@ router.delete("/:id", async (req, res) => {
 router.get("/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    
+
     const rows = await q(
-      `SELECT 
-        id, user_id, name, subject, content, template_id,
-        status, total_recipients, sent_count, opened_count, 
-        clicked_count, bounced_count, scheduled_at, created_at,
-        has_followup, followup_template_id, followup_subject,
-        followup_delay_hours, followup_condition
+      `SELECT
+         id, user_id, name, subject, content, template_id,
+         status, total_recipients, sent_count, opened_count,
+         clicked_count, bounced_count, scheduled_at, created_at,
+         has_followup, followup_template_id, followup_subject,
+         followup_delay_hours, followup_condition
        FROM email_campaigns
        WHERE id = ?`,
       [id]
     );
 
-    if (rows.length === 0) {
-      return res.status(404).json({ 
-        success: false, 
-        message: "Campaign not found" 
-      });
+    if (!rows.length) {
+      return res.status(404).json({ success: false, message: "Campaign not found" });
     }
 
-    const campaign = rows[0];
-    
+    const c = rows[0];
     res.json({
       success: true,
       data: {
-        id: campaign.id,
-        userId: campaign.user_id,
-        name: campaign.name,
-        subject: campaign.subject,
-        content: campaign.content,
-        templateId: campaign.template_id,
-        status: campaign.status,
-        totalRecipients: campaign.total_recipients,
-        sentCount: campaign.sent_count,
-        openedCount: campaign.opened_count,
-        clickedCount: campaign.clicked_count,
-        bouncedCount: campaign.bounced_count,
-        scheduledAt: campaign.scheduled_at,
-        createdAt: campaign.created_at,
-        hasFollowup: campaign.has_followup,
-        followupTemplateId: campaign.followup_template_id,
-        followupSubject: campaign.followup_subject,
-        followupDelayHours: campaign.followup_delay_hours,
-        followupCondition: campaign.followup_condition
-      }
+        id:                  c.id,
+        userId:              c.user_id,
+        name:                c.name,
+        subject:             c.subject,
+        content:             c.content,
+        templateId:          c.template_id,
+        status:              c.status,
+        totalRecipients:     c.total_recipients,
+        sentCount:           c.sent_count,
+        openedCount:         c.opened_count,
+        clickedCount:        c.clicked_count,
+        bouncedCount:        c.bounced_count,
+        scheduledAt:         c.scheduled_at,
+        createdAt:           c.created_at,
+        hasFollowup:         c.has_followup,
+        followupTemplateId:  c.followup_template_id,
+        followupSubject:     c.followup_subject,
+        followupDelayHours:  c.followup_delay_hours,
+        followupCondition:   c.followup_condition,
+      },
     });
 
   } catch (err) {
@@ -251,24 +231,19 @@ router.get("/:id", async (req, res) => {
     res.status(500).json({ success: false, message: err.message });
   }
 });
+
 /**
  * SEND CAMPAIGN EMAILS (REAL SMTP)
  * POST /api/campaigns/:id/send
  */
-// mail send endpoint
 router.post("/:id/send", async (req, res) => {
   const conn = await db.getConnection();
 
   try {
-    const rawId = req.params.id;
-    const campaignId = Number(rawId);
+    const campaignId = Number(req.params.id); // ✅ FIX: id → campaignId (ek jagah se)
 
-    // ✅ HARD GUARD
     if (!Number.isInteger(campaignId)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid campaign ID"
-      });
+      return res.status(400).json({ success: false, message: "Invalid campaign ID" });
     }
 
     console.log("➡️ SEND route hit:", campaignId);
@@ -284,43 +259,39 @@ router.post("/:id/send", async (req, res) => {
 
     const campaign = campaignRows[0];
 
-    // 2️⃣ Leads fetch
+    // ✅ FIX: `id` ki jagah `campaignId` use karo
     const [leads] = await conn.query(
       `SELECT email, name FROM campaign_data WHERE campaign_id = ?`,
-      [id]
+      [campaignId]
     );
 
-    // 3️⃣ Latest email account
     const emailAccount = await getLatestEmailAccount(conn, campaign.user_id);
+    console.log("📧 SMTP account:", emailAccount.email);
 
-    console.log("📧 SMTP account:", emailAccount.email); // ✅ LOG #2
-
-    // 4️⃣ Create transporter
     const transporter = createTransporter(emailAccount);
 
-    // 5️⃣ Update status
+    // ✅ FIX: `id` ki jagah `campaignId`
     await conn.query(
       `UPDATE email_campaigns SET status = 'sending' WHERE id = ?`,
-      [id]
+      [campaignId]
     );
 
     let sentCount = 0;
 
     for (const lead of leads) {
       await transporter.sendMail({
-        from: `"${emailAccount.from_name || 'Campaign'}" <${emailAccount.email}>`,
-        to: lead.email,
+        from: `"${emailAccount.from_name || "Campaign"}" <${emailAccount.email}>`,
+        to:      lead.email,
         subject: campaign.subject,
-        html: campaign.content
+        html:    campaign.content,
       });
-
       sentCount++;
     }
 
-    // 6️⃣ Final update
+    // ✅ FIX: `id` ki jagah `campaignId`
     await conn.query(
       `UPDATE email_campaigns SET status = 'sent', sent_count = ? WHERE id = ?`,
-      [sentCount, id]
+      [sentCount, campaignId]
     );
 
     res.json({ success: true, sentCount });
@@ -332,7 +303,5 @@ router.post("/:id/send", async (req, res) => {
     conn.release();
   }
 });
-
-
 
 module.exports = router;
