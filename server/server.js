@@ -5,7 +5,11 @@ const compression = require('compression');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
 const session = require('express-session');
-require('dotenv').config({ path: './config.env' });
+const path = require("path");
+require("dotenv").config({ path: path.join(__dirname, "config.env") });
+
+console.log("APP_URL =", process.env.APP_URL);
+
 
 // Routes
 const authRoutes = require('./routes/auth');
