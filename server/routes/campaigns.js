@@ -28,6 +28,7 @@ router.post("/", async (req, res) => {
       leads,
       followupSettings,
       runAt,
+      settings,
     } = req.body;
 
     if (!userId || !name || !subject || !template || !Array.isArray(leads)) {
@@ -43,8 +44,9 @@ router.post("/", async (req, res) => {
        (user_id, name, subject, content, template_id,
         status, scheduled_at, total_recipients,
         has_followup, followup_template_id,
-        followup_subject, followup_delay_hours, followup_condition)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        followup_subject, followup_delay_hours, followup_condition,
+        delay_ms, max_level)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         userId,
         name,
@@ -59,6 +61,8 @@ router.post("/", async (req, res) => {
         followupSettings?.subject     || null,
         followupSettings?.delayHours  || 24,
         followupSettings?.condition   || "not_opened",
+        settings?.delayBetweenEmails || 200,
+        settings?.maxLevel || 100,
       ]
     );
 
@@ -103,7 +107,7 @@ router.get("/", async (req, res) => {
       `SELECT id, user_id, name, subject, status,
               total_recipients, sent_count,
               opened_count, clicked_count, bounced_count, unsubscribed_count,
-              scheduled_at, created_at
+              scheduled_at, created_at, delay_ms, max_level
        FROM email_campaigns
        WHERE user_id = ?
        ORDER BY created_at DESC`,
@@ -126,6 +130,8 @@ router.get("/", async (req, res) => {
         unsubscribedCount: r.unsubscribed_count,
         scheduledAt:      r.scheduled_at,
         createdAt:        r.created_at,
+        delayMs:          r.delay_ms,
+        maxLevel:         r.max_level,
       })),
     });
 
@@ -192,7 +198,7 @@ router.get("/:id", async (req, res) => {
          status, total_recipients, sent_count, opened_count,
          clicked_count, bounced_count, unsubscribed_count, scheduled_at, created_at,
          has_followup, followup_template_id, followup_subject,
-         followup_delay_hours, followup_condition
+         followup_delay_hours, followup_condition, delay_ms, max_level
        FROM email_campaigns
        WHERE id = ?`,
       [id]
@@ -226,6 +232,8 @@ router.get("/:id", async (req, res) => {
         followupSubject:     c.followup_subject,
         followupDelayHours:  c.followup_delay_hours,
         followupCondition:   c.followup_condition,
+        delayMs:             c.delay_ms,
+        maxLevel:            c.max_level,
       },
     });
 
