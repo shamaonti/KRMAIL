@@ -20,6 +20,7 @@ const emailCampRoutes = require('./routes/emailcamp');
 const followupService = require('./services/followupService');
 const mailboxRoutes = require("./routes/mailbox");
 const emailScheduler = require('./services/emailScheduler');
+const followupWorker = require('./workers/followupWorker'); // ✅ ADD THIS
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -123,6 +124,16 @@ app.post('/api/scheduler/pause', (req, res) => {
 app.post('/api/scheduler/resume', (req, res) => {
   emailScheduler.resume();
   res.json({ success: true, message: 'Scheduler resumed' });
+});
+
+/* ---------------- FOLLOWUP WORKER API (OPTIONAL MONITORING) ---------------- */
+app.post('/api/followup/trigger', async (req, res) => {
+  try {
+    await followupWorker.runFollowups();
+    res.json({ success: true, message: 'Follow-up worker triggered manually' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
 });
 
 /* ---------------- 404 HANDLER ---------------- */

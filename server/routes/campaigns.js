@@ -35,10 +35,14 @@ router.post("/", async (req, res) => {
       return res.status(400).json({ success: false, message: "Invalid payload" });
     }
 
-    const hasFollowup = followupSettings ? 1 : 0;
+    const hasFollowup = followupSettings?.enabled ? 1 : 0;
 
-    // ✅ FIX: runAt frontend se IST mein aata hai
-    // DB ka NOW() bhi IST mein hai — isliye direct store karo, convert mat karo
+    // ✅ FIX: delayHours — null-safe, no || 24 fallback
+    // Agar user ne time set kiya hai tabhi save karo, warna NULL
+    const followupDelayHours = (followupSettings?.enabled && followupSettings?.delayHours != null)
+      ? parseFloat(followupSettings.delayHours)
+      : null;
+
     const [result] = await conn.query(
       `INSERT INTO email_campaigns
        (user_id, name, subject, content, template_id,
@@ -54,13 +58,13 @@ router.post("/", async (req, res) => {
         template.content || "",
         templateId || null,
         runAt ? "scheduled" : "draft",
-        runAt || null,                    // frontend ka time as-is store karo
+        runAt || null,
         leads.length,
         hasFollowup,
-        followupSettings?.templateId || null,
-        followupSettings?.subject     || null,
-        followupSettings?.delayHours  || 24,
-        followupSettings?.condition   || "not_opened",
+        followupSettings?.enabled ? (followupSettings?.templateId || null) : null,
+        followupSettings?.enabled ? (followupSettings?.subject     || null) : null,
+        followupDelayHours,                                    // ✅ FIXED: exact user value ya NULL
+        followupSettings?.enabled ? (followupSettings?.condition || "not_opened") : null,
         settings?.delayBetweenEmails || 200,
         settings?.maxLevel || 100,
       ]
@@ -251,7 +255,7 @@ router.post("/:id/send", async (req, res) => {
   const conn = await db.getConnection();
 
   try {
-    const campaignId = Number(req.params.id); // ✅ FIX: id → campaignId (ek jagah se)
+    const campaignId = Number(req.params.id);
 
     if (!Number.isInteger(campaignId)) {
       return res.status(400).json({ success: false, message: "Invalid campaign ID" });
@@ -270,7 +274,6 @@ router.post("/:id/send", async (req, res) => {
 
     const campaign = campaignRows[0];
 
-    // ✅ FIX: `id` ki jagah `campaignId` use karo
     const [leads] = await conn.query(
       `SELECT email, name FROM campaign_data WHERE campaign_id = ?`,
       [campaignId]
@@ -281,7 +284,6 @@ router.post("/:id/send", async (req, res) => {
 
     const transporter = createTransporter(emailAccount);
 
-    // ✅ FIX: `id` ki jagah `campaignId`
     await conn.query(
       `UPDATE email_campaigns SET status = 'sending' WHERE id = ?`,
       [campaignId]
@@ -299,7 +301,6 @@ router.post("/:id/send", async (req, res) => {
       sentCount++;
     }
 
-    // ✅ FIX: `id` ki jagah `campaignId`
     await conn.query(
       `UPDATE email_campaigns SET status = 'sent', sent_count = ? WHERE id = ?`,
       [sentCount, campaignId]
