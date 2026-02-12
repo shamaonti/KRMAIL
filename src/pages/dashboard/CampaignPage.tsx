@@ -100,6 +100,7 @@ const CampaignPage = () => {
   const [sendingHours, setSendingHours] = useState({ from: '09:00', to: '17:00' });
   const [abTesting, setAbTesting] = useState(false);
   const [delayBetweenEmails, setDelayBetweenEmails] = useState(200);
+  const [maxLevel, setMaxLevel] = useState(100);
 
   // Follow-up settings
   const [followupEnabled, setFollowupEnabled] = useState(false);
@@ -218,7 +219,7 @@ const CampaignPage = () => {
         leads,
         // ✅ FIX: scheduleAt ko DB format mein bhejo (IST as-is, no UTC conversion)
         runAt: scheduleAt ? toDbDatetime(scheduleAt) : null,
-        settings: { timezone, sendingHours, abTesting, delayBetweenEmails },
+        settings: { timezone, sendingHours, abTesting, delayBetweenEmails, maxLevel },
         followupSettings: followupEnabled ? {
           enabled: followupEnabled,
           templateId: followupTemplate?.id,
@@ -523,6 +524,18 @@ const CampaignPage = () => {
                 <div className="space-y-2">
                   <Label>Delay Between Emails (ms)</Label>
                   <Input type="number" value={delayBetweenEmails} onChange={(e) => setDelayBetweenEmails(parseInt(e.target.value) || 200)} min="100" max="5000" />
+                </div>
+                <div className="space-y-2">
+                  <Label>Max Level (Per Sender)</Label>
+                  <Input
+                    type="number"
+                    value={maxLevel}
+                    onChange={(e) => setMaxLevel(parseInt(e.target.value) || 100)}
+                    min="1"
+                    max="1000"
+                    placeholder="Emails per sender per round"
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">Maximum number of emails to send per sender in each round</p>
                 </div>
 
                 <div className="space-y-4 pt-4 border-t">
