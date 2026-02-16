@@ -9,11 +9,12 @@ const { sign } = require("../helpers/unsubscribeToken");
 
 /**
  * EMAIL SCHEDULER SERVICE
- * Sends scheduled campaigns using ALL sender accounts (batch processing)
- * ✅ Global + campaign unsubscribe safe (once unsubscribed = never email again for that scope)
- * ✅ Respects daily_limit per email account
- * ✅ Distributes emails evenly across accounts based on max_level
- * ✅ Continues sending until stack is empty
+ * ✅ scope='all'     → us user ke kisi bhi campaign mein email nahi jayegi
+ * ✅ scope='campaign' → sirf us specific campaign mein block hogi
+ * ✅ Unsubscribed leads NEVER overwritten with 'sent' (id + status guard)
+ * ✅ unsubscribed_count correctly saved after each batch + final
+ * ✅ daily_limit respected per email account
+ * ✅ Distributes evenly across accounts based on max_level
  */
 class EmailScheduler {
   constructor() {
@@ -31,7 +32,6 @@ class EmailScheduler {
   start() {
     if (this.cronJob) return;
     console.log("📅 Email Scheduler started");
-
     this.cronJob = cron.schedule("* * * * *", async () => {
       if (!this.isPaused) {
         await this.checkAndSendScheduledCampaigns();
@@ -204,7 +204,6 @@ class EmailScheduler {
 
       if ((account.remainingToday || 0) <= 0) {
         accountIndex = (accountIndex + 1) % emailAccounts.length;
-
         if (emailAccounts.every((acc) => (acc.remainingToday || 0) <= 0)) {
           console.log("⚠️ All accounts reached daily limit");
           break;
@@ -234,6 +233,17 @@ class EmailScheduler {
     return distribution;
   }
 
+  // ✅ campaign_data se live unsubscribed count
+  async getUnsubscribedCount(conn, campaignId) {
+    const [result] = await conn.query(
+      `SELECT COUNT(*) as cnt
+       FROM campaign_data
+       WHERE campaign_id = ? AND status = 'unsubscribed'`,
+      [campaignId]
+    );
+    return Number(result[0]?.cnt || 0);
+  }
+
   async sendCampaign(conn, campaign) {
     console.log(`\n📧 Campaign: "${campaign.name}" (id: ${campaign.id})`);
 
@@ -243,25 +253,33 @@ class EmailScheduler {
     console.log(`⚙️ Settings: max_level=${maxLevel}, delay_ms=${delayMs}ms`);
 
     /**
-     * ✅ STEP 1: Mark unsubscribed users in campaign_data
-     * IMPORTANT: scope-aware
-     * - scope='all' always blocks
-     * - scope='campaign' blocks only that campaign_id
+     * ✅ STEP 1: Pending leads ko unsubscribed mark karo
+     *
+     * scope='all'      → sirf user_id match kaafi hai (campaign_id koi bhi ho)
+     * scope='campaign' → user_id + campaign_id dono match karna chahiye
+     *
+     * ONLY status='pending' rows update hote hain
+     * Already 'sent' / 'unsubscribed' rows safe hain
      */
-    await conn.query(
+    const [unsubMarkResult] = await conn.query(
       `UPDATE campaign_data cd
        JOIN unsubscribes u
-         ON u.user_id = ?
-        AND LOWER(TRIM(u.email)) = LOWER(TRIM(cd.email))
+         ON LOWER(TRIM(u.email)) = LOWER(TRIM(cd.email))
+        AND u.user_id = ?
         AND (
               u.scope = 'all'
-              OR (u.scope = 'campaign' AND u.campaign_id = cd.campaign_id)
+              OR (
+                u.scope = 'campaign'
+                AND CAST(u.campaign_id AS UNSIGNED) = CAST(cd.campaign_id AS UNSIGNED)
+              )
             )
        SET cd.status = 'unsubscribed'
        WHERE cd.campaign_id = ?
          AND cd.status = 'pending'`,
       [campaign.user_id, campaign.id]
     );
+
+    console.log(`🚫 Marked ${unsubMarkResult.affectedRows || 0} leads as unsubscribed before sending`);
 
     let totalSent = 0;
     let totalFailed = 0;
@@ -284,7 +302,7 @@ class EmailScheduler {
       }
 
       await conn.query(
-        `UPDATE email_campaigns SET status='sending', updated_at=NOW() WHERE id=?`,
+        `UPDATE email_campaigns SET status = 'sending', updated_at = NOW() WHERE id = ?`,
         [campaign.id]
       );
 
@@ -293,22 +311,16 @@ class EmailScheduler {
         console.log(`\n🔄 === BATCH ${batchNumber} ===`);
 
         /**
-         * ✅ STEP 2: Pull only "pending" AND not unsubscribed (scope-aware)
+         * ✅ STEP 2: Sirf 'pending' leads pull karo
+         * unsubscribed leads yahan aayenge hi nahi (STEP 1 ne mark kar diya)
+         * id SELECT karo — update row-safe hoga
          */
         const [leads] = await conn.query(
-          `SELECT cd.email, cd.name, cd.payload, cd.status
+          `SELECT cd.id, cd.email, cd.name, cd.payload
            FROM campaign_data cd
-           LEFT JOIN unsubscribes u
-             ON u.user_id = ?
-            AND LOWER(TRIM(u.email)) = LOWER(TRIM(cd.email))
-            AND (
-                  u.scope = 'all'
-                  OR (u.scope = 'campaign' AND u.campaign_id = cd.campaign_id)
-                )
            WHERE cd.campaign_id = ?
-             AND cd.status = 'pending'
-             AND u.id IS NULL`,
-          [campaign.user_id, campaign.id]
+             AND cd.status = 'pending'`,
+          [campaign.id]
         );
 
         if (!leads.length) {
@@ -351,13 +363,11 @@ class EmailScheduler {
 
         let batchSent = 0;
         let batchFailed = 0;
-
         const appUrl = this.getAppUrl();
 
         for (const item of distribution) {
           const { lead, account } = item;
           const leadEmailNorm = this.normalizeEmail(lead.email);
-
           const transporter = createTransporter(account);
 
           try {
@@ -396,11 +406,16 @@ class EmailScheduler {
               },
             });
 
+            /**
+             * ✅ CRITICAL:
+             * id use karo (email nahi) — row-safe
+             * AND status = 'pending' guard — unsubscribed rows KABHI overwrite nahi honge
+             */
             await conn.query(
               `UPDATE campaign_data
                SET status = 'sent', sent_at = NOW(), sent_from_email = ?
-               WHERE campaign_id = ? AND LOWER(TRIM(email)) = ?`,
-              [account.email, campaign.id, leadEmailNorm]
+               WHERE id = ? AND status = 'pending'`,
+              [account.email, lead.id]
             );
 
             batchSent++;
@@ -415,8 +430,8 @@ class EmailScheduler {
             await conn.query(
               `UPDATE campaign_data
                SET status = 'failed', error_message = ?, sent_from_email = ?
-               WHERE campaign_id = ? AND LOWER(TRIM(email)) = ?`,
-              [String(err?.message || err), account.email, campaign.id, leadEmailNorm]
+               WHERE id = ? AND status = 'pending'`,
+              [String(err?.message || err), account.email, lead.id]
             );
 
             console.error(`❌ ${lead.email}:`, err?.message || err);
@@ -425,15 +440,21 @@ class EmailScheduler {
 
         console.log(`\n🎉 Batch ${batchNumber} Complete → Sent: ${batchSent}, Failed: ${batchFailed}`);
 
+        // ✅ Har batch ke baad unsubscribed_count update karo
+        const batchUnsubCount = await this.getUnsubscribedCount(conn, campaign.id);
+
         await conn.query(
           `UPDATE email_campaigns
            SET sent_count = ?,
                failed_count = ?,
+               unsubscribed_count = ?,
                status = 'sending',
                updated_at = NOW()
            WHERE id = ?`,
-          [totalSent, totalFailed, campaign.id]
+          [totalSent, totalFailed, batchUnsubCount, campaign.id]
         );
+
+        console.log(`📊 Unsubscribed so far: ${batchUnsubCount}`);
 
         const [remaining] = await conn.query(
           `SELECT COUNT(*) as count
@@ -453,21 +474,26 @@ class EmailScheduler {
         }
       }
 
+      // ✅ Final completion — unsubscribed_count bhi save karo
+      const finalUnsubCount = await this.getUnsubscribedCount(conn, campaign.id);
+
       await conn.query(
         `UPDATE email_campaigns
          SET status = 'sent',
              sent_count = ?,
              failed_count = ?,
+             unsubscribed_count = ?,
              completed_at = NOW(),
              updated_at = NOW()
          WHERE id = ?`,
-        [totalSent, totalFailed, campaign.id]
+        [totalSent, totalFailed, finalUnsubCount, campaign.id]
       );
 
       console.log(`\n🏁 CAMPAIGN COMPLETE!`);
       console.log(`📊 Total Batches: ${batchNumber}`);
       console.log(`📧 Total Sent: ${totalSent}`);
       console.log(`❌ Total Failed: ${totalFailed}`);
+      console.log(`🚫 Total Unsubscribed: ${finalUnsubCount}`);
 
       this.stats.totalSent += totalSent;
       this.stats.totalFailed += totalFailed;

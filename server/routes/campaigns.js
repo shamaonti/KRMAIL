@@ -36,21 +36,6 @@ function normEmail(email) {
 }
 
 /**
- * ✅ USER-SAFE unsubscribe set (global + campaign scope)
- * returns Set of normalized emails
- */
-async function getUnsubscribedSet(userId, campaignId) {
-  const [rows] = await db.query(
-    `SELECT LOWER(TRIM(email)) AS email
-     FROM unsubscribes
-     WHERE user_id = ?
-       AND (scope = 'all' OR (scope = 'campaign' AND campaign_id = ?))`,
-    [userId, campaignId]
-  );
-  return new Set(rows.map((r) => r.email));
-}
-
-/**
  * Normalize followupSettings from different possible frontend keys.
  */
 function getFollowupSettings(body) {
@@ -211,22 +196,12 @@ router.get("/", async (req, res) => {
           ec.has_followup, ec.followup_template_id, ec.followup_subject,
           ec.followup_delay_hours, ec.followup_condition,
 
+          -- ✅ campaign_data se live unsubscribed count
           (
             SELECT COUNT(*)
-            FROM unsubscribes u
-            WHERE u.user_id = ec.user_id
-              AND (
-                u.campaign_id = ec.id
-                OR (
-                  u.scope = 'all'
-                  AND EXISTS (
-                    SELECT 1
-                    FROM campaign_data cd
-                    WHERE cd.campaign_id = ec.id
-                      AND LOWER(TRIM(cd.email)) = LOWER(TRIM(u.email))
-                  )
-                )
-              )
+            FROM campaign_data cd
+            WHERE cd.campaign_id = ec.id
+              AND cd.status = 'unsubscribed'
           ) AS unsubscribed_count_live
 
        FROM email_campaigns ec
@@ -326,22 +301,12 @@ router.get("/:id", async (req, res) => {
     const rows = await q(
       `SELECT
          ec.*,
+         -- ✅ campaign_data se live unsubscribed count
          (
            SELECT COUNT(*)
-           FROM unsubscribes u
-           WHERE u.user_id = ec.user_id
-             AND (
-               u.campaign_id = ec.id
-               OR (
-                 u.scope = 'all'
-                 AND EXISTS (
-                   SELECT 1
-                   FROM campaign_data cd
-                   WHERE cd.campaign_id = ec.id
-                     AND LOWER(TRIM(cd.email)) = LOWER(TRIM(u.email))
-                 )
-               )
-             )
+           FROM campaign_data cd
+           WHERE cd.campaign_id = ec.id
+             AND cd.status = 'unsubscribed'
          ) AS unsubscribed_count_live
        FROM email_campaigns ec
        WHERE ec.id = ?`,
@@ -387,13 +352,14 @@ router.get("/:id", async (req, res) => {
 });
 
 /**
- * ✅ MANUAL SEND (FULLY FIXED)
+ * ✅ MANUAL SEND
  * POST /api/campaigns/:id/send
  *
- * - Skips unsubscribed
- * - Updates campaign_data per lead:
- *   status='sent', sent_at, sent_from_email, smtp_message_id
- * - Marks skipped unsub leads as status='unsubscribed'
+ * ✅ scope='all'      → us user ke kisi bhi campaign mein block
+ * ✅ scope='campaign' → sirf is campaign mein block
+ * ✅ CAST fix — bigint vs int type mismatch handle
+ * ✅ id-based update + status='pending' guard (unsubscribed kabhi overwrite nahi hoga)
+ * ✅ unsubscribed_count saved to email_campaigns
  */
 router.post("/:id/send", async (req, res) => {
   const conn = await db.getConnection();
@@ -407,42 +373,68 @@ router.post("/:id/send", async (req, res) => {
     const userId = toInt(campaign.user_id);
     if (!userId) return res.status(400).json({ success: false, message: "Campaign has invalid user_id" });
 
+    /**
+     * ✅ STEP 1: Pending leads ko unsubscribed mark karo
+     *
+     * scope='all'      → sirf user_id match kaafi hai (campaign_id koi bhi ho)
+     * scope='campaign' → user_id + campaign_id dono match karna chahiye
+     *
+     * CAST fix: unsubscribes.campaign_id = bigint, campaign_data.campaign_id = int
+     * Type mismatch ki wajah se match fail hota tha — CAST se fix hota hai
+     */
+    await conn.query(
+      `UPDATE campaign_data cd
+       JOIN unsubscribes u
+         ON LOWER(TRIM(u.email)) = LOWER(TRIM(cd.email))
+        AND u.user_id = ?
+        AND (
+              u.scope = 'all'
+              OR (
+                u.scope = 'campaign'
+                AND CAST(u.campaign_id AS UNSIGNED) = CAST(cd.campaign_id AS UNSIGNED)
+              )
+            )
+       SET cd.status = 'unsubscribed'
+       WHERE cd.campaign_id = ?
+         AND cd.status = 'pending'`,
+      [userId, campaignId]
+    );
+
+    // ✅ STEP 2: Sirf pending leads fetch karo (id bhi select karo)
     const [leads] = await conn.query(
       `SELECT id, email, name
        FROM campaign_data
-       WHERE campaign_id = ?`,
+       WHERE campaign_id = ? AND status = 'pending'`,
       [campaignId]
     );
-    if (!leads.length) return res.status(400).json({ success: false, message: "No leads found for this campaign" });
+
+    if (!leads.length) {
+      // Sab unsubscribed the — count update karo aur return karo
+      const [unsubResult] = await conn.query(
+        `SELECT COUNT(*) as cnt FROM campaign_data WHERE campaign_id = ? AND status = 'unsubscribed'`,
+        [campaignId]
+      );
+      const unsubCount = Number(unsubResult[0]?.cnt || 0);
+      await conn.query(
+        `UPDATE email_campaigns SET status = 'sent', sent_count = 0, unsubscribed_count = ? WHERE id = ?`,
+        [unsubCount, campaignId]
+      );
+      return res.json({ success: true, sentCount: 0, skippedUnsub: unsubCount });
+    }
 
     const emailAccount = await getLatestEmailAccount(userId);
     const transporter = createTransporter(emailAccount);
-
-    const unsubSet = await getUnsubscribedSet(userId, campaignId);
 
     const baseUrl = process.env.APP_URL || "http://localhost:3001";
 
     await conn.query(`UPDATE email_campaigns SET status = 'sending' WHERE id = ?`, [campaignId]);
 
     let sentCount = 0;
-    let skippedUnsub = 0;
 
     for (const lead of leads) {
       if (!lead?.email) continue;
 
       const emailNorm = normEmail(lead.email);
-
-      // ✅ Skip unsubscribed + mark row
-      if (unsubSet.has(emailNorm)) {
-        skippedUnsub++;
-        await conn.query(
-          `UPDATE campaign_data
-           SET status = 'unsubscribed'
-           WHERE id = ?`,
-          [lead.id]
-        );
-        continue;
-      }
 
       const token = sign({
         email: emailNorm,
@@ -475,29 +467,38 @@ router.post("/:id/send", async (req, res) => {
 
       const smtpMessageId = info?.messageId || null;
 
-      // ✅ Mark lead sent properly (needed for follow-up + reply detection)
+      // ✅ id use karo + status='pending' guard
+      // Unsubscribed rows kabhi 'sent' se overwrite nahi honge
       await conn.query(
         `UPDATE campaign_data
          SET status = 'sent',
              sent_at = NOW(),
              sent_from_email = ?,
              smtp_message_id = ?
-         WHERE id = ?`,
+         WHERE id = ? AND status = 'pending'`,
         [emailAccount.email, smtpMessageId, lead.id]
       );
 
       sentCount++;
     }
 
+    // ✅ Final: unsubscribed_count bhi save karo
+    const [unsubResult] = await conn.query(
+      `SELECT COUNT(*) as cnt FROM campaign_data WHERE campaign_id = ? AND status = 'unsubscribed'`,
+      [campaignId]
+    );
+    const finalUnsubCount = Number(unsubResult[0]?.cnt || 0);
+
     await conn.query(
       `UPDATE email_campaigns
        SET status = 'sent',
-           sent_count = ?
+           sent_count = ?,
+           unsubscribed_count = ?
        WHERE id = ?`,
-      [sentCount, campaignId]
+      [sentCount, finalUnsubCount, campaignId]
     );
 
-    return res.json({ success: true, sentCount, skippedUnsub });
+    return res.json({ success: true, sentCount, skippedUnsub: finalUnsubCount });
   } catch (err) {
     console.error("❌ SEND CAMPAIGN ERROR:", err);
     return res.status(500).json({ success: false, message: err.message });
