@@ -1,5 +1,7 @@
+// services/emailScheduler.js
 const path = require("path");
 require("dotenv").config({ path: path.join(__dirname, "../.env") });
+
 const cron = require("node-cron");
 const db = require("../db");
 const { createTransporter } = require("../helpers/mailer");
@@ -8,12 +10,11 @@ const { sign } = require("../helpers/unsubscribeToken");
 /**
  * EMAIL SCHEDULER SERVICE
  * Sends scheduled campaigns using ALL sender accounts (batch processing)
- * ✅ Global unsubscribe safe (once unsubscribed = never email again)
+ * ✅ Global + campaign unsubscribe safe (once unsubscribed = never email again for that scope)
  * ✅ Respects daily_limit per email account
  * ✅ Distributes emails evenly across accounts based on max_level
  * ✅ Continues sending until stack is empty
  */
-
 class EmailScheduler {
   constructor() {
     this.isProcessing = false;
@@ -38,12 +39,12 @@ class EmailScheduler {
     });
   }
 
-  pause() { 
+  pause() {
     this.isPaused = true;
     console.log("⏸️ Scheduler paused");
   }
-  
-  resume() { 
+
+  resume() {
     this.isPaused = false;
     console.log("▶️ Scheduler resumed");
   }
@@ -65,14 +66,15 @@ class EmailScheduler {
     return String(email || "").trim().toLowerCase();
   }
 
-  // {Name} & {{name}} support
   mergePlaceholders(content, lead) {
     let out = content;
 
     const name = lead.name || "";
     const email = lead.email || "";
     const payload = lead.payload
-      ? (typeof lead.payload === "string" ? JSON.parse(lead.payload) : lead.payload)
+      ? typeof lead.payload === "string"
+        ? JSON.parse(lead.payload)
+        : lead.payload
       : {};
 
     const allFields = { name, email, Name: name, Email: email, ...payload };
@@ -84,6 +86,10 @@ class EmailScheduler {
     }
 
     return out;
+  }
+
+  getAppUrl() {
+    return process.env.APP_URL || "http://localhost:3001";
   }
 
   async checkAndSendScheduledCampaigns() {
@@ -122,9 +128,6 @@ class EmailScheduler {
     }
   }
 
-  /**
-   * Get available sending capacity for each email account today
-   */
   async getEmailAccountCapacity(conn, userId) {
     const [accounts] = await conn.query(
       `SELECT
@@ -144,9 +147,8 @@ class EmailScheduler {
 
     if (!accounts.length) return [];
 
-    // Get today's sent count for each account
     const accountsWithCapacity = [];
-    
+
     for (const account of accounts) {
       const [sentToday] = await conn.query(
         `SELECT COUNT(*) as sent_count
@@ -158,76 +160,72 @@ class EmailScheduler {
       );
 
       const sentCount = sentToday[0]?.sent_count || 0;
-      const remaining = Math.max(0, account.daily_limit - sentCount);
+      const dailyLimit = Number(account.daily_limit || 0);
+      const remaining = Math.max(0, dailyLimit - sentCount);
 
       accountsWithCapacity.push({
         ...account,
         sentToday: sentCount,
-        remainingToday: remaining
+        remainingToday: remaining,
       });
     }
 
     return accountsWithCapacity;
   }
 
-  /**
-   * Distribute leads across email accounts based on their capacity
-   */
   distributeLeadsToAccounts(leads, emailAccounts, maxLevel) {
     const distribution = [];
-    
-    // Calculate total available capacity
-    const totalCapacity = emailAccounts.reduce((sum, acc) => sum + acc.remainingToday, 0);
-    
+
+    const totalCapacity = emailAccounts.reduce(
+      (sum, acc) => sum + (acc.remainingToday || 0),
+      0
+    );
+
     if (totalCapacity === 0) {
       console.log("⚠️ No sending capacity available today");
       return [];
     }
 
-    // Calculate batch size (min of max_level per account OR total leads)
     const batchSize = Math.min(
       emailAccounts.length * maxLevel,
       leads.length,
       totalCapacity
     );
 
-    console.log(`📊 Batch size: ${batchSize} (${emailAccounts.length} accounts × ${maxLevel} max_level)`);
+    console.log(
+      `📊 Batch size: ${batchSize} (${emailAccounts.length} accounts × ${maxLevel} max_level)`
+    );
 
     let leadIndex = 0;
     let accountIndex = 0;
 
-    // Distribute leads in round-robin fashion
     while (leadIndex < batchSize && leadIndex < leads.length) {
       const account = emailAccounts[accountIndex];
-      
-      // Skip account if it has no remaining capacity
-      if (account.remainingToday <= 0) {
+
+      if ((account.remainingToday || 0) <= 0) {
         accountIndex = (accountIndex + 1) % emailAccounts.length;
-        
-        // Check if all accounts are exhausted
-        if (emailAccounts.every(acc => acc.remainingToday <= 0)) {
+
+        if (emailAccounts.every((acc) => (acc.remainingToday || 0) <= 0)) {
           console.log("⚠️ All accounts reached daily limit");
           break;
         }
         continue;
       }
 
-      // Calculate how many emails this account can send in this batch
       const accountBatchLimit = Math.min(
         maxLevel,
         account.remainingToday,
         batchSize - leadIndex
       );
 
-      // Assign leads to this account
-      for (let i = 0; i < accountBatchLimit && leadIndex < batchSize && leadIndex < leads.length; i++) {
-        distribution.push({
-          lead: leads[leadIndex],
-          account: account
-        });
-        
+      for (
+        let i = 0;
+        i < accountBatchLimit && leadIndex < batchSize && leadIndex < leads.length;
+        i++
+      ) {
+        distribution.push({ lead: leads[leadIndex], account });
         leadIndex++;
-        account.remainingToday--; // Decrease remaining capacity
+        account.remainingToday--;
       }
 
       accountIndex = (accountIndex + 1) % emailAccounts.length;
@@ -239,21 +237,29 @@ class EmailScheduler {
   async sendCampaign(conn, campaign) {
     console.log(`\n📧 Campaign: "${campaign.name}" (id: ${campaign.id})`);
 
-    // Get campaign settings
     const maxLevel = campaign.max_level || 100;
     const delayMs = campaign.delay_ms || 200;
 
     console.log(`⚙️ Settings: max_level=${maxLevel}, delay_ms=${delayMs}ms`);
 
-    // 🔐 STEP 1: Mark unsubscribed users in campaign_data
+    /**
+     * ✅ STEP 1: Mark unsubscribed users in campaign_data
+     * IMPORTANT: scope-aware
+     * - scope='all' always blocks
+     * - scope='campaign' blocks only that campaign_id
+     */
     await conn.query(
       `UPDATE campaign_data cd
-      JOIN unsubscribes u
-        ON LOWER(TRIM(u.email)) = LOWER(TRIM(cd.email))
-        AND u.user_id = ?
-      SET cd.status = 'unsubscribed'
-      WHERE cd.campaign_id = ?
-        AND cd.status = 'pending'`,
+       JOIN unsubscribes u
+         ON u.user_id = ?
+        AND LOWER(TRIM(u.email)) = LOWER(TRIM(cd.email))
+        AND (
+              u.scope = 'all'
+              OR (u.scope = 'campaign' AND u.campaign_id = cd.campaign_id)
+            )
+       SET cd.status = 'unsubscribed'
+       WHERE cd.campaign_id = ?
+         AND cd.status = 'pending'`,
       [campaign.user_id, campaign.id]
     );
 
@@ -262,13 +268,12 @@ class EmailScheduler {
     let batchNumber = 0;
 
     try {
-      // Get template content once (outside the loop)
       const [templates] = await conn.query(
         `SELECT content FROM email_templates WHERE id = ?`,
         [campaign.template_id]
       );
-      const templateContent = templates?.[0]?.content || "";
 
+      const templateContent = templates?.[0]?.content || "";
       if (!templateContent) {
         console.error("❌ No template content found");
         await conn.query(
@@ -278,21 +283,28 @@ class EmailScheduler {
         return;
       }
 
-      // 🔄 CONTINUOUS LOOP UNTIL ALL EMAILS SENT (STACK EMPTY)
+      await conn.query(
+        `UPDATE email_campaigns SET status='sending', updated_at=NOW() WHERE id=?`,
+        [campaign.id]
+      );
+
       while (true) {
         batchNumber++;
         console.log(`\n🔄 === BATCH ${batchNumber} ===`);
 
         /**
-         * 🔐 GLOBAL UNSUBSCRIBE RULE
-         * If email exists in unsubscribes table for this user → DO NOT SEND
+         * ✅ STEP 2: Pull only "pending" AND not unsubscribed (scope-aware)
          */
         const [leads] = await conn.query(
           `SELECT cd.email, cd.name, cd.payload, cd.status
            FROM campaign_data cd
            LEFT JOIN unsubscribes u
-             ON LOWER(TRIM(u.email)) = LOWER(TRIM(cd.email))
-            AND u.user_id = ?
+             ON u.user_id = ?
+            AND LOWER(TRIM(u.email)) = LOWER(TRIM(cd.email))
+            AND (
+                  u.scope = 'all'
+                  OR (u.scope = 'campaign' AND u.campaign_id = cd.campaign_id)
+                )
            WHERE cd.campaign_id = ?
              AND cd.status = 'pending'
              AND u.id IS NULL`,
@@ -301,36 +313,35 @@ class EmailScheduler {
 
         if (!leads.length) {
           console.log("✅ Stack empty - All emails processed!");
-          break; // Exit the loop - no more leads to process
+          break;
         }
 
         console.log(`📬 Pending leads in stack: ${leads.length}`);
 
-        // Get email accounts with their remaining daily capacity
         const emailAccounts = await this.getEmailAccountCapacity(conn, campaign.user_id);
-
         if (!emailAccounts.length) {
           console.error("❌ No email accounts for user:", campaign.user_id);
           break;
         }
 
-        // Check if any account has capacity
-        const totalCapacity = emailAccounts.reduce((sum, acc) => sum + acc.remainingToday, 0);
-        
+        const totalCapacity = emailAccounts.reduce(
+          (sum, acc) => sum + (acc.remainingToday || 0),
+          0
+        );
+
         if (totalCapacity === 0) {
           console.log("⚠️ All accounts reached daily limit - stopping");
           break;
         }
 
-        // Log account capacities
         console.log("\n📮 Email Account Capacities:");
-        emailAccounts.forEach(acc => {
-          console.log(`   ${acc.email}: ${acc.sentToday}/${acc.daily_limit} sent today, ${acc.remainingToday} remaining`);
+        emailAccounts.forEach((acc) => {
+          console.log(
+            `   ${acc.email}: ${acc.sentToday}/${acc.daily_limit} sent today, ${acc.remainingToday} remaining`
+          );
         });
 
-        // Distribute leads across accounts for this batch
         const distribution = this.distributeLeadsToAccounts(leads, emailAccounts, maxLevel);
-
         if (!distribution.length) {
           console.log("⚠️ No emails can be sent in this batch");
           break;
@@ -341,7 +352,8 @@ class EmailScheduler {
         let batchSent = 0;
         let batchFailed = 0;
 
-        // Send emails according to distribution
+        const appUrl = this.getAppUrl();
+
         for (const item of distribution) {
           const { lead, account } = item;
           const leadEmailNorm = this.normalizeEmail(lead.email);
@@ -351,11 +363,11 @@ class EmailScheduler {
           try {
             let emailContent = this.mergePlaceholders(templateContent, lead);
 
-            // Add tracking pixel
-            const trackingPixel = `<img src="${process.env.APP_URL}/api/track/open?cid=${campaign.id}&email=${encodeURIComponent(lead.email)}&t=${Date.now()}" width="1" height="1" style="display:none" />`;
+            const trackingPixel = `<img src="${appUrl}/api/track/open?cid=${campaign.id}&email=${encodeURIComponent(
+              lead.email
+            )}&t=${Date.now()}" width="1" height="1" style="display:none" />`;
             emailContent += trackingPixel;
 
-            // Add unsubscribe link
             const token = sign({
               email: leadEmailNorm,
               userId: campaign.user_id,
@@ -364,22 +376,26 @@ class EmailScheduler {
               exp: Date.now() + 365 * 24 * 60 * 60 * 1000,
             });
 
+            const unsubUrl = `${appUrl}/unsubscribe?token=${encodeURIComponent(token)}`;
+
             emailContent += `
               <hr/>
               <p style="font-size:12px;color:#666">
                 Don't want these emails?
-                <a href="${process.env.APP_URL}/unsubscribe?token=${token}">Unsubscribe</a>
+                <a href="${unsubUrl}">Unsubscribe</a>
               </p>`;
 
-            // Send email
             await transporter.sendMail({
               from: `"${account.from_name || "Campaign"}" <${account.email}>`,
               to: lead.email,
               subject: campaign.subject,
               html: emailContent,
+              headers: {
+                "List-Unsubscribe": `<${unsubUrl}>`,
+                "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+              },
             });
 
-            // Update campaign_data
             await conn.query(
               `UPDATE campaign_data
                SET status = 'sent', sent_at = NOW(), sent_from_email = ?
@@ -390,28 +406,25 @@ class EmailScheduler {
             batchSent++;
             totalSent++;
             console.log(`✅ [${batchSent}/${distribution.length}] ${lead.email} ← ${account.email}`);
-            
-            // Delay between emails
-            await this.delay(delayMs);
 
+            await this.delay(delayMs);
           } catch (err) {
             batchFailed++;
             totalFailed++;
-            
+
             await conn.query(
               `UPDATE campaign_data
                SET status = 'failed', error_message = ?, sent_from_email = ?
                WHERE campaign_id = ? AND LOWER(TRIM(email)) = ?`,
               [String(err?.message || err), account.email, campaign.id, leadEmailNorm]
             );
-            
+
             console.error(`❌ ${lead.email}:`, err?.message || err);
           }
         }
 
         console.log(`\n🎉 Batch ${batchNumber} Complete → Sent: ${batchSent}, Failed: ${batchFailed}`);
-        
-        // Update campaign counts after each batch
+
         await conn.query(
           `UPDATE email_campaigns
            SET sent_count = ?,
@@ -422,7 +435,6 @@ class EmailScheduler {
           [totalSent, totalFailed, campaign.id]
         );
 
-        // Check if more leads exist
         const [remaining] = await conn.query(
           `SELECT COUNT(*) as count
            FROM campaign_data
@@ -430,17 +442,17 @@ class EmailScheduler {
           [campaign.id]
         );
 
-        if (remaining[0].count > 0) {
-          console.log(`⏳ ${remaining[0].count} leads remaining - waiting ${delayMs}ms before next batch...`);
-          await this.delay(delayMs); // Delay before starting next batch
-          // Loop continues to next batch...
+        if ((remaining[0]?.count || 0) > 0) {
+          console.log(
+            `⏳ ${remaining[0].count} leads remaining - waiting ${delayMs}ms before next batch...`
+          );
+          await this.delay(delayMs);
         } else {
           console.log("✅ Stack empty - All emails sent!");
-          break; // Exit the loop
+          break;
         }
       }
 
-      // Final update - mark campaign as complete
       await conn.query(
         `UPDATE email_campaigns
          SET status = 'sent',
@@ -457,10 +469,8 @@ class EmailScheduler {
       console.log(`📧 Total Sent: ${totalSent}`);
       console.log(`❌ Total Failed: ${totalFailed}`);
 
-      // Update stats
       this.stats.totalSent += totalSent;
       this.stats.totalFailed += totalFailed;
-
     } catch (err) {
       console.error("❌ sendCampaign crash:", err);
       await conn.query(
@@ -479,10 +489,9 @@ class EmailScheduler {
       ...this.stats,
       isProcessing: this.isProcessing,
       isPaused: this.isPaused,
-      isRunning: this.cronJob !== null
+      isRunning: this.cronJob !== null,
     };
   }
 }
 
 module.exports = new EmailScheduler();
-
