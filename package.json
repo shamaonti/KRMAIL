@@ -61,6 +61,7 @@
     "input-otp": "^1.2.4",
     "lucide-react": "^0.462.0",
     "mailparser": "^3.9.3",
+    "moment-timezone": "^0.6.0",
     "mustache": "^4.2.0",
     "mysql2": "^3.16.0",
     "next-themes": "^0.3.0",

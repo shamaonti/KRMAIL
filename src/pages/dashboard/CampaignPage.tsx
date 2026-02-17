@@ -24,6 +24,9 @@ import { useNavigate } from "react-router-dom";
 interface Lead {
   email: string;
   name?: string;
+  firstName?: string;
+  lastName?: string;
+  company?: string;
   [key: string]: any;
 }
 
@@ -37,7 +40,7 @@ interface EmailTemplate {
 }
 
 interface Campaign {
-  id: string;
+  id: number;
   userId: number;
   name: string;
   subject: string;
@@ -57,27 +60,36 @@ interface Campaign {
 
 const API_BASE_URL = 'http://localhost:3001';
 
-// ✅ FIX: datetime-local value → "YYYY-MM-DD HH:MM:SS" (DB format, IST as-is)
-// Browser ka datetime-local value already LOCAL time mein hota hai
-// Isko as-is DB mein bhejo — convert MAT karo
+// datetime-local value → "YYYY-MM-DD HH:MM:SS" (DB format, local as-is)
 function toDbDatetime(localVal: string): string {
   if (!localVal) return "";
-  // "2026-02-10T10:11" → "2026-02-10 10:11:00"
   return localVal.replace("T", " ") + ":00";
 }
 
-// ✅ FIX: DB se aaya datetime display ke liye
 function formatDisplay(dt: string | undefined): string {
   if (!dt) return "-";
   return new Date(dt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
 }
 
-// ✅ FIX: datetime-local input ka min value (local time mein)
 function localDatetimeMin(): string {
   const now = new Date();
-  // Local time string for datetime-local input
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+}
+
+// ✅ safe number conversion
+function toNum(v: any): number | null {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+// ✅ safe JSON read
+function safeJsonParse<T = any>(s: string | null, fallback: T): T {
+  try {
+    return s ? (JSON.parse(s) as T) : fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 const CampaignPage = () => {
@@ -95,6 +107,9 @@ const CampaignPage = () => {
   const [successMessage, setSuccessMessage] = useState('');
   const [isLoadingCampaigns, setIsLoadingCampaigns] = useState(false);
 
+  // ✅ NEW: Show Leads dialog state (buttons beside upload)
+  const [showLeadsDialog, setShowLeadsDialog] = useState(false);
+
   // Campaign settings
   const [timezone, setTimezone] = useState('UTC');
   const [sendingHours, setSendingHours] = useState({ from: '09:00', to: '17:00' });
@@ -107,18 +122,21 @@ const CampaignPage = () => {
   const [followupTemplate, setFollowupTemplate] = useState<EmailTemplate | null>(null);
   const [followupSubject, setFollowupSubject] = useState('Follow-up: Your previous email');
   const [followupDelayHours, setFollowupDelayHours] = useState(0.083);
-  const [followupCondition, setFollowupCondition] = useState<'not_opened' | 'not_clicked' | 'always'>('not_opened');
+
+  // ✅ UPDATED: added 'no_reply'
+  const [followupCondition, setFollowupCondition] = useState<'not_opened' | 'not_clicked' | 'always' | 'no_reply'>('not_opened');
 
   // Schedule settings
   const [scheduleAt, setScheduleAt] = useState('');
-  const [sendingCampaignId, setSendingCampaignId] = useState<string | null>(null);
+  const [sendingCampaignId, setSendingCampaignId] = useState<number | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [searchQuery, setSearchQuery] = useState('');
   const PAGE_SIZE = 10;
 
   const getCurrentUserId = () => {
-    const user = JSON.parse(localStorage.getItem('user') || '{}');
-    return user.id || 1;
+    const user = safeJsonParse<{ id?: number }>(localStorage.getItem('user'), {});
+    const id = toNum(user?.id);
+    return id ?? 1;
   };
 
   const userId = getCurrentUserId();
@@ -144,6 +162,7 @@ const CampaignPage = () => {
 
   useEffect(() => {
     loadEmailTemplates();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
 
   const loadCampaigns = async () => {
@@ -154,24 +173,32 @@ const CampaignPage = () => {
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
       const data = await response.json();
       if (data.success) {
-        const backendCampaigns = data.data.map((c: any) => ({
-          id: c.id,
-          userId: c.userId,
-          name: c.name,
-          subject: c.subject,
-          template: c.template,
-          leads: c.leads || [],
-          status: c.status,
-          createdAt: c.createdAt,
-          scheduledAt: c.scheduledAt,
-          settings: c.settings,
-          followupSettings: c.followupSettings,
-          sentCount: c.sentCount,
-          openedCount: c.openedCount,
-          clickedCount: c.clickedCount,
-          bouncedCount: c.bouncedCount,
-          totalRecipients: c.totalRecipients,
-        }));
+        const backendCampaigns: Campaign[] = (data.data || [])
+          .map((c: any) => {
+            const idNum = toNum(c.id);
+            if (!idNum) return null;
+
+            return {
+              id: idNum,
+              userId: toNum(c.userId) ?? userId,
+              name: c.name,
+              subject: c.subject,
+              template: c.template,
+              leads: c.leads || [],
+              status: c.status,
+              createdAt: c.createdAt,
+              scheduledAt: c.scheduledAt,
+              settings: c.settings,
+              followupSettings: c.followupSettings,
+              sentCount: c.sentCount,
+              openedCount: c.openedCount,
+              clickedCount: c.clickedCount,
+              bouncedCount: c.bouncedCount,
+              totalRecipients: c.totalRecipients,
+            } as Campaign;
+          })
+          .filter(Boolean);
+
         setCampaigns(backendCampaigns);
       } else {
         setErrors([data.message || 'Failed to load campaigns']);
@@ -187,8 +214,10 @@ const CampaignPage = () => {
 
   useEffect(() => {
     loadCampaigns();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
 
+  // ✅ UPDATED: do NOT show success here (CSVUploader shows "Successfully uploaded..." line)
   const handleLeadsUploaded = (uploadedLeads: Lead[]) => {
     setLeads(prevLeads => {
       const combinedLeads = [...prevLeads, ...uploadedLeads];
@@ -197,8 +226,14 @@ const CampaignPage = () => {
       );
       return uniqueLeads;
     });
-    setSuccessMessage(`Successfully uploaded ${uploadedLeads.length} leads`);
-    setTimeout(() => setSuccessMessage(''), 3000);
+  };
+
+  // ✅ NEW: Clear all leads (button beside upload)
+  const handleClearAllLeads = () => {
+    setLeads([]);
+    setShowLeadsDialog(false);
+    setSuccessMessage("All leads cleared");
+    setTimeout(() => setSuccessMessage(''), 2500);
   };
 
   const handleCreateCampaign = async () => {
@@ -217,7 +252,6 @@ const CampaignPage = () => {
         templateId: selectedTemplate.id,
         template: selectedTemplate,
         leads,
-        // ✅ FIX: scheduleAt ko DB format mein bhejo (IST as-is, no UTC conversion)
         runAt: scheduleAt ? toDbDatetime(scheduleAt) : null,
         settings: { timezone, sendingHours, abTesting, delayBetweenEmails, maxLevel },
         followupSettings: followupEnabled ? {
@@ -236,12 +270,19 @@ const CampaignPage = () => {
         body: JSON.stringify(campaignData)
       });
 
-      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-      const data = await response.json();
+      const raw = await response.text();
+      const data = safeJsonParse<any>(raw, null);
 
-      if (data.success) {
+      if (!response.ok) {
+        throw new Error(data?.message || `HTTP error! status: ${response.status}`);
+      }
+
+      if (data?.success) {
+        const newId = toNum(data.campaignId);
+        if (!newId) throw new Error("Campaign created but invalid campaignId returned from API");
+
         const newCampaign: Campaign = {
-          id: data.campaignId.toString(),
+          id: newId,
           userId,
           name: campaignName,
           subject: emailSubject,
@@ -252,8 +293,10 @@ const CampaignPage = () => {
           settings: campaignData.settings,
           followupSettings: campaignData.followupSettings
         };
+
         setCurrentCampaign(newCampaign);
         await loadCampaigns();
+
         setSuccessMessage(
           scheduleAt
             ? `Campaign scheduled for ${formatDisplay(toDbDatetime(scheduleAt))}`
@@ -261,7 +304,7 @@ const CampaignPage = () => {
         );
         setTimeout(() => setSuccessMessage(''), 4000);
       } else {
-        setErrors([data.message || 'Failed to save campaign']);
+        setErrors([data?.message || 'Failed to save campaign']);
       }
     } catch (error) {
       console.error('Error creating campaign:', error);
@@ -271,30 +314,36 @@ const CampaignPage = () => {
 
   const handleSendCampaign = async (campaign: Campaign) => {
     try {
-      if (!campaign.id || isNaN(Number(campaign.id))) {
-        setErrors(["Invalid campaign ID"]);
+      const safeId = toNum(campaign?.id);
+      if (!safeId) {
+        setErrors([`Invalid campaign ID: ${String(campaign?.id)}`]);
         return;
       }
-      setSendingCampaignId(campaign.id);
+
+      console.log("➡️ Sending campaign id:", safeId);
+
+      setSendingCampaignId(safeId);
       setIsSending(true);
       setErrors([]);
 
-      const res = await fetch(
-        `${API_BASE_URL}/api/campaigns/${campaign.id}/send`,
-        { method: "POST" }
-      );
+      const res = await fetch(`${API_BASE_URL}/api/campaigns/${safeId}/send`, {
+        method: "POST",
+      });
 
-      const data = await res.json();
+      const raw = await res.text();
+      const data = safeJsonParse<any>(raw, null);
 
-      if (!data.success) {
-        throw new Error(data.message);
+      if (!res.ok) {
+        throw new Error(data?.message || raw || `Send failed (HTTP ${res.status})`);
+      }
+      if (!data?.success) {
+        throw new Error(data?.message || "Send failed");
       }
 
       await loadCampaigns();
 
-      setSuccessMessage(
-        `Campaign "${campaign.name}" sent successfully (${data.sentCount})`
-      );
+      setSuccessMessage(`Campaign "${campaign.name}" sent successfully (${data.sentCount})`);
+      setTimeout(() => setSuccessMessage(''), 4000);
     } catch (err) {
       setErrors([err instanceof Error ? err.message : "Send failed"]);
     } finally {
@@ -310,17 +359,28 @@ const CampaignPage = () => {
     if (dlg && typeof dlg.showModal === "function") dlg.showModal();
   };
 
-  const handleDeleteCampaign = async (campaignId: string) => {
+  const handleDeleteCampaign = async (campaignId: number) => {
     if (!confirm('Are you sure you want to delete this campaign?')) return;
+
+    const safeId = toNum(campaignId);
+    if (!safeId) {
+      setErrors([`Invalid campaign ID: ${String(campaignId)}`]);
+      return;
+    }
+
     try {
-      const response = await fetch(`${API_BASE_URL}/api/campaigns/${campaignId}`, { method: 'DELETE' });
-      const data = await response.json();
-      if (data.success) {
+      const response = await fetch(`${API_BASE_URL}/api/campaigns/${safeId}`, { method: 'DELETE' });
+      const raw = await response.text();
+      const data = safeJsonParse<any>(raw, null);
+
+      if (!response.ok) throw new Error(data?.message || raw || `Delete failed (HTTP ${response.status})`);
+
+      if (data?.success) {
         await loadCampaigns();
         setSuccessMessage('Campaign deleted');
         setTimeout(() => setSuccessMessage(''), 3000);
       } else {
-        setErrors([data.message || 'Failed to delete campaign']);
+        setErrors([data?.message || 'Failed to delete campaign']);
       }
     } catch (error) {
       console.error('Delete error:', error);
@@ -328,7 +388,6 @@ const CampaignPage = () => {
     }
   };
 
-  // Filter and paginate campaigns
   const filteredCampaigns = campaigns.filter(c =>
     c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     c.subject.toLowerCase().includes(searchQuery.toLowerCase())
@@ -340,6 +399,14 @@ const CampaignPage = () => {
   );
 
   const totalPages = Math.ceil(filteredCampaigns.length / PAGE_SIZE);
+
+  const renderLeadName = (l: Lead) => {
+    if (l.name) return l.name;
+    const fn = (l.firstName || "").trim();
+    const ln = (l.lastName || "").trim();
+    const full = `${fn} ${ln}`.trim();
+    return full || "-";
+  };
 
   return (
     <>
@@ -390,6 +457,54 @@ const CampaignPage = () => {
         </div>
       </dialog>
 
+      {/* ✅ Leads Dialog (Show Leads button beside upload) */}
+      <dialog
+        open={showLeadsDialog}
+        className="rounded-lg backdrop:bg-black/30 p-0 w-full max-w-3xl"
+        onClose={() => setShowLeadsDialog(false)}
+      >
+        <div className="bg-card rounded-lg p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold">Uploaded Leads ({leads.length})</h3>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => setShowLeadsDialog(false)}>Close</Button>
+              <Button variant="destructive" onClick={handleClearAllLeads} disabled={leads.length === 0}>
+                <Trash2 className="mr-2 h-4 w-4" /> Clear All
+              </Button>
+            </div>
+          </div>
+
+          <div className="max-h-[60vh] overflow-auto border rounded-md">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Email</TableHead>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Company</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {leads.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={3} className="text-center text-muted-foreground py-8">
+                      No leads uploaded
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  leads.map((l, i) => (
+                    <TableRow key={`${l.email}-${i}`}>
+                      <TableCell className="font-mono text-sm">{l.email}</TableCell>
+                      <TableCell>{renderLeadName(l)}</TableCell>
+                      <TableCell>{l.company || "-"}</TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </div>
+      </dialog>
+
       <main className="p-6">
         {errors.length > 0 && (
           <Alert variant="destructive" className="mb-6">
@@ -426,16 +541,21 @@ const CampaignPage = () => {
                   <Label>Campaign Name *</Label>
                   <Input placeholder="Enter campaign name" value={campaignName} onChange={(e) => setCampaignName(e.target.value)} />
                 </div>
+
                 <div>
                   <Label>Email Subject *</Label>
                   <Input placeholder="Enter email subject" value={emailSubject} onChange={(e) => setEmailSubject(e.target.value)} />
                 </div>
+
                 <div>
                   <Label>Email Template *</Label>
-                  <Select value={selectedTemplate?.id.toString()} onValueChange={(value) => {
-                    const template = templates.find(t => t.id.toString() === value);
-                    if (template) setSelectedTemplate(template);
-                  }}>
+                  <Select
+                    value={selectedTemplate?.id.toString()}
+                    onValueChange={(value) => {
+                      const template = templates.find(t => t.id.toString() === value);
+                      if (template) setSelectedTemplate(template);
+                    }}
+                  >
                     <SelectTrigger><SelectValue placeholder="Select template" /></SelectTrigger>
                     <SelectContent>
                       {templates.map((template) => (
@@ -444,28 +564,56 @@ const CampaignPage = () => {
                     </SelectContent>
                   </Select>
                 </div>
+
                 <div>
                   <Label>Schedule At (optional)</Label>
                   <Input
                     type="datetime-local"
                     value={scheduleAt}
                     onChange={(e) => setScheduleAt(e.target.value)}
-                    // ✅ FIX: min = local time (not UTC .toISOString())
                     min={localDatetimeMin()}
                   />
                   <p className="text-xs text-muted-foreground mt-1">
                     {scheduleAt
-                      // ✅ FIX: display in IST, not UTC
                       ? `Will be sent at ${formatDisplay(toDbDatetime(scheduleAt))}`
                       : 'Leave empty to save as draft and send manually'}
                   </p>
                 </div>
-                <div>
-                  <Label>Upload Leads (CSV) * ({leads.length} leads)</Label>
+
+                {/* ✅ UPDATED Upload section: buttons beside upload title (NO Uploaded Leads block below) */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <Label className="m-0">Upload Leads (CSV) *</Label>
+                      <Badge variant="secondary">{leads.length} leads</Badge>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setShowLeadsDialog(true)}
+                        disabled={leads.length === 0}
+                      >
+                        <Eye className="mr-2 h-4 w-4" />
+                        Show Leads
+                      </Button>
+
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        onClick={handleClearAllLeads}
+                        disabled={leads.length === 0}
+                      >
+                        <Trash2 className="mr-2 h-4 w-4" />
+                        Clear All
+                      </Button>
+                    </div>
+                  </div>
+
                   <CSVUploader onLeadsUploaded={handleLeadsUploaded} existingLeads={leads} />
                 </div>
 
-                {/* ✅ FIX: Duplicate card removed — sirf ek baar render hoga */}
                 {currentCampaign && (
                   <Card className="bg-green-50 border-green-200 dark:bg-green-900/20 dark:border-green-800">
                     <CardContent className="p-4">
@@ -502,6 +650,7 @@ const CampaignPage = () => {
                     </SelectContent>
                   </Select>
                 </div>
+
                 <div className="space-y-2">
                   <Label>Sending Hours</Label>
                   <div className="grid grid-cols-2 gap-2">
@@ -515,16 +664,19 @@ const CampaignPage = () => {
                     </div>
                   </div>
                 </div>
+
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
                     <Label>A/B Testing</Label>
                     <Switch checked={abTesting} onCheckedChange={setAbTesting} />
                   </div>
                 </div>
+
                 <div className="space-y-2">
                   <Label>Delay Between Emails (ms)</Label>
                   <Input type="number" value={delayBetweenEmails} onChange={(e) => setDelayBetweenEmails(parseInt(e.target.value) || 200)} min="100" max="5000" />
                 </div>
+
                 <div className="space-y-2">
                   <Label>Max Level (Per Sender)</Label>
                   <Input
@@ -543,14 +695,18 @@ const CampaignPage = () => {
                     <Label>Follow-up Email</Label>
                     <Switch checked={followupEnabled} onCheckedChange={setFollowupEnabled} />
                   </div>
+
                   {followupEnabled && (
                     <div className="space-y-4">
                       <div>
                         <Label>Follow-up Template</Label>
-                        <Select onValueChange={(value) => {
-                          const tmpl = templates.find(t => t.id.toString() === value);
-                          if (tmpl) setFollowupTemplate(tmpl);
-                        }}>
+                        <Select
+                          value={followupTemplate?.id ? String(followupTemplate.id) : undefined}
+                          onValueChange={(value) => {
+                            const tmpl = templates.find(t => t.id.toString() === value);
+                            if (tmpl) setFollowupTemplate(tmpl);
+                          }}
+                        >
                           <SelectTrigger><SelectValue placeholder="Select follow-up template" /></SelectTrigger>
                           <SelectContent>
                             {templates.map((template) => (
@@ -559,22 +715,29 @@ const CampaignPage = () => {
                           </SelectContent>
                         </Select>
                       </div>
+
                       <div>
                         <Label>Follow-up Subject</Label>
                         <Input value={followupSubject} onChange={(e) => setFollowupSubject(e.target.value)} />
                       </div>
+
                       <div>
                         <Label>Send After (hours)</Label>
                         <Input type="number" step="0.01" value={followupDelayHours} onChange={(e) => setFollowupDelayHours(parseFloat(e.target.value) || 0.083)} min="0.01" max="168" />
                       </div>
+
                       <div>
                         <Label>Send If</Label>
-                        <Select value={followupCondition} onValueChange={(value: any) => setFollowupCondition(value)}>
+                        <Select
+                          value={followupCondition}
+                          onValueChange={(value) => setFollowupCondition(value as any)}
+                        >
                           <SelectTrigger><SelectValue /></SelectTrigger>
                           <SelectContent>
                             <SelectItem value="not_opened">Original email not opened</SelectItem>
                             <SelectItem value="not_clicked">Original email not clicked</SelectItem>
                             <SelectItem value="always">Always send follow-up</SelectItem>
+                            <SelectItem value="no_reply">No reply received</SelectItem>
                           </SelectContent>
                         </Select>
                       </div>
@@ -642,15 +805,14 @@ const CampaignPage = () => {
                             </TableCell>
                             <TableCell>
                               <Badge variant={
-                                c.status === 'sent'      ? 'default'     :
-                                c.status === 'scheduled' ? 'secondary'   :
-                                c.status === 'sending'   ? 'destructive' : 'outline'
+                                c.status === 'sent' ? 'default' :
+                                c.status === 'scheduled' ? 'secondary' :
+                                c.status === 'sending' ? 'destructive' : 'outline'
                               }>
                                 {c.status}
                               </Badge>
                             </TableCell>
                             <TableCell>
-                              {/* ✅ FIX: IST mein display */}
                               {c.scheduledAt
                                 ? <span className="text-sm">{formatDisplay(c.scheduledAt)}</span>
                                 : <span className="text-muted-foreground text-sm">-</span>
@@ -679,10 +841,21 @@ const CampaignPage = () => {
                                     )}
                                   </Button>
                                 )}
-                                <Button size="sm" variant="ghost" onClick={() => navigate(`/dashboard/campaign-result/${c.id}`)} title="View results">
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => navigate(`/dashboard/campaign-result/${c.id}`)}
+                                  title="View results"
+                                >
                                   <Eye className="h-4 w-4" />
                                 </Button>
-                                <Button size="sm" variant="ghost" onClick={() => handleDeleteCampaign(c.id)} disabled={c.status === "sending"} title="Delete">
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => handleDeleteCampaign(c.id)}
+                                  disabled={c.status === "sending"}
+                                  title="Delete"
+                                >
                                   <Trash2 className="h-4 w-4 text-destructive" />
                                 </Button>
                               </div>
@@ -693,7 +866,6 @@ const CampaignPage = () => {
                     </Table>
                   </div>
 
-                  {/* Pagination Controls */}
                   {totalPages > 1 && (
                     <div className="flex items-center justify-between pt-4 border-t">
                       <div className="text-sm text-muted-foreground">

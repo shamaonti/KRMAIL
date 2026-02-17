@@ -5,15 +5,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { 
+import {
   ArrowLeft,
   Mail,
   Eye,
   MousePointerClick,
   AlertTriangle,
-  Users,
   TrendingUp,
-  Download,
   Loader2,
   AlertCircle,
   CheckCircle,
@@ -46,28 +44,63 @@ interface Campaign {
   followupCondition?: string;
 }
 
+// ✅ safe number helper (prevents NaN)
+function toNum(v: any, fallback = 0): number {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+// ✅ safe parse id from route
+function parseCampaignId(idParam: string | undefined): number | null {
+  if (!idParam) return null;
+  const n = Number(idParam);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
 const CampaignResult = () => {
   const { id } = useParams();
   const navigate = useNavigate();
+
   const [campaign, setCampaign] = useState<Campaign | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
 
-  const getCurrentUserId = () => {
-    const user = JSON.parse(localStorage.getItem('user') || '{}');
-    return user.id || 1;
-  };
-
-  const fetchCampaignDetails = async (campaignId: string) => {
+  const fetchCampaignDetails = async (campaignId: number) => {
     try {
       setIsLoading(true);
       setError('');
-      
+
       const response = await fetch(`${API_BASE_URL}/api/campaigns/${campaignId}`);
       const data = await response.json();
 
       if (data.success) {
-        setCampaign(data.data);
+        const c = data.data || {};
+
+        // ✅ normalize numeric fields (avoid undefined -> NaN)
+        const normalized: Campaign = {
+          id: toNum(c.id),
+          userId: toNum(c.userId),
+          name: c.name ?? '',
+          subject: c.subject ?? '',
+          content: c.content ?? undefined,
+          templateId: c.templateId != null ? toNum(c.templateId) : undefined,
+          status: c.status ?? 'draft',
+          totalRecipients: toNum(c.totalRecipients),
+          sentCount: toNum(c.sentCount),
+          openedCount: toNum(c.openedCount),
+          clickedCount: toNum(c.clickedCount),
+          bouncedCount: toNum(c.bouncedCount),
+          unsubscribedCount: toNum(c.unsubscribedCount),
+          scheduledAt: c.scheduledAt ?? undefined,
+          createdAt: c.createdAt ?? new Date().toISOString(),
+          hasFollowup: Boolean(c.hasFollowup),
+          followupTemplateId: c.followupTemplateId != null ? toNum(c.followupTemplateId) : undefined,
+          followupSubject: c.followupSubject ?? undefined,
+          followupDelayHours: c.followupDelayHours != null ? toNum(c.followupDelayHours) : undefined,
+          followupCondition: c.followupCondition ?? undefined,
+        };
+
+        setCampaign(normalized);
       } else {
         setError(data.message || 'Campaign not found');
       }
@@ -80,42 +113,46 @@ const CampaignResult = () => {
   };
 
   useEffect(() => {
-    if (id) {
-      fetchCampaignDetails(id);
+    const campaignId = parseCampaignId(id);
+    if (!campaignId) {
+      setIsLoading(false);
+      setError('Invalid campaign id');
+      return;
     }
+    fetchCampaignDetails(campaignId);
   }, [id]);
 
-  const openRate = campaign && campaign.sentCount > 0
-    ? ((campaign.openedCount / campaign.sentCount) * 100).toFixed(1)
-    : '0.0';
+  // ✅ Safe numeric locals
+  const sent = toNum(campaign?.sentCount);
+  const opened = toNum(campaign?.openedCount);
+  const clicked = toNum(campaign?.clickedCount);
+  const bounced = toNum(campaign?.bouncedCount);
+  const unsub = toNum(campaign?.unsubscribedCount);
+  const total = toNum(campaign?.totalRecipients);
 
-  const clickRate = campaign && campaign.sentCount > 0
-    ? ((campaign.clickedCount / campaign.sentCount) * 100).toFixed(1)
-    : '0.0';
+  const openRate = sent > 0 ? ((opened / sent) * 100).toFixed(1) : '0.0';
+  const clickRate = sent > 0 ? ((clicked / sent) * 100).toFixed(1) : '0.0';
+  const bounceRate = sent > 0 ? ((bounced / sent) * 100).toFixed(1) : '0.0';
+  const unsubRate = sent > 0 ? ((unsub / sent) * 100).toFixed(1) : '0.0';
 
-  const bounceRate = campaign && campaign.sentCount > 0
-    ? ((campaign.bouncedCount / campaign.sentCount) * 100).toFixed(1)
-    : '0.0';
-
-  const unsubRate = campaign && campaign.sentCount > 0
-    ? ((campaign.unsubscribedCount / campaign.sentCount) * 100).toFixed(1)
-    : '0.0';
-
-  const deliveryRate = campaign && campaign.totalRecipients > 0
-    ? (((campaign.sentCount - campaign.bouncedCount) / campaign.totalRecipients) * 100).toFixed(1)
+  const deliveryRate = total > 0
+    ? (((sent - bounced) / total) * 100).toFixed(1)
     : '0.0';
 
   const getStatusBadge = (status: string) => {
-    const statusConfig: Record<string, { variant: "default" | "secondary" | "destructive" | "outline"; icon: React.ReactNode }> = {
+    const statusConfig: Record<
+      string,
+      { variant: "default" | "secondary" | "destructive" | "outline"; icon: React.ReactNode }
+    > = {
       draft: { variant: "secondary", icon: <Clock className="h-3 w-3 mr-1" /> },
       scheduled: { variant: "outline", icon: <Clock className="h-3 w-3 mr-1" /> },
       sending: { variant: "default", icon: <Send className="h-3 w-3 mr-1 animate-pulse" /> },
       sent: { variant: "default", icon: <CheckCircle className="h-3 w-3 mr-1" /> },
       completed: { variant: "default", icon: <CheckCircle className="h-3 w-3 mr-1" /> },
     };
-    
-    const config = statusConfig[status.toLowerCase()] || { variant: "secondary" as const, icon: null };
-    
+
+    const config = statusConfig[(status || '').toLowerCase()] || { variant: "secondary" as const, icon: null };
+
     return (
       <Badge variant={config.variant} className="flex items-center gap-1 capitalize">
         {config.icon}
@@ -140,8 +177,8 @@ const CampaignResult = () => {
       <div className="min-h-screen bg-background">
         <header className="bg-card shadow-sm border-b">
           <div className="px-6 py-4">
-            <Button 
-              variant="ghost" 
+            <Button
+              variant="ghost"
               size="sm"
               onClick={() => navigate('/dashboard/campaign')}
             >
@@ -180,8 +217,8 @@ const CampaignResult = () => {
               </div>
             </div>
             <div className="flex gap-3">
-               <Button 
-                variant="ghost" 
+              <Button
+                variant="ghost"
                 size="sm"
                 onClick={() => navigate('/dashboard/campaign')}
               >
@@ -210,7 +247,7 @@ const CampaignResult = () => {
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Total Recipients</p>
-                <p className="font-medium">{campaign.totalRecipients}</p>
+                <p className="font-medium">{total}</p>
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Follow-up Enabled</p>
@@ -226,143 +263,125 @@ const CampaignResult = () => {
           </CardContent>
         </Card>
 
-        {/* Stats Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        {/* ✅ Compact Stats Row (no scroll, 5 in one line) */}
+        <div className="grid grid-cols-5 gap-3">
           {/* Sent */}
           <Card className="relative overflow-hidden">
-            <CardContent className="p-6">
+            <CardContent className="p-4">
               <div className="flex items-start justify-between">
                 <div>
-                  <p className="text-sm font-medium text-muted-foreground">Emails Sent</p>
-                  <h3 className="text-3xl font-bold mt-2 text-foreground">{campaign.sentCount}</h3>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    of {campaign.totalRecipients} recipients
-                  </p>
+                  <p className="text-xs font-medium text-muted-foreground">Emails Sent</p>
+                  <h3 className="text-2xl font-bold mt-1 text-foreground">{sent}</h3>
+                  <p className="text-xs text-muted-foreground mt-1">of {total}</p>
                 </div>
-                <div className="p-3 rounded-full bg-primary/10">
-                  <Send className="h-6 w-6 text-primary" />
+                <div className="p-2 rounded-full bg-primary/10">
+                  <Send className="h-5 w-5 text-primary" />
                 </div>
               </div>
-              <div className="mt-4">
-                <div className="flex justify-between text-sm mb-1">
+              <div className="mt-3">
+                <div className="flex justify-between text-xs mb-1">
                   <span className="text-muted-foreground">Progress</span>
                   <span className="font-medium">
-                    {campaign.totalRecipients > 0 
-                      ? ((campaign.sentCount / campaign.totalRecipients) * 100).toFixed(0) 
-                      : 0}%
+                    {total > 0 ? ((sent / total) * 100).toFixed(0) : 0}%
                   </span>
                 </div>
-                <Progress 
-                  value={campaign.totalRecipients > 0 
-                    ? (campaign.sentCount / campaign.totalRecipients) * 100 
-                    : 0} 
-                  className="h-2"
-                />
+                <Progress value={total > 0 ? (sent / total) * 100 : 0} className="h-1.5" />
               </div>
             </CardContent>
           </Card>
 
           {/* Opened */}
           <Card className="relative overflow-hidden">
-            <CardContent className="p-6">
+            <CardContent className="p-4">
               <div className="flex items-start justify-between">
                 <div>
-                  <p className="text-sm font-medium text-muted-foreground">Opened</p>
-                  <h3 className="text-3xl font-bold mt-2 text-foreground">{campaign.openedCount}</h3>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    {openRate}% open rate
-                  </p>
+                  <p className="text-xs font-medium text-muted-foreground">Opened</p>
+                  <h3 className="text-2xl font-bold mt-1 text-foreground">{opened}</h3>
+                  <p className="text-xs text-muted-foreground mt-1">{openRate}% open</p>
                 </div>
-                <div className="p-3 rounded-full bg-green-100 dark:bg-green-900/30">
-                  <Eye className="h-6 w-6 text-green-600 dark:text-green-400" />
+                <div className="p-2 rounded-full bg-green-100 dark:bg-green-900/30">
+                  <Eye className="h-5 w-5 text-green-600 dark:text-green-400" />
                 </div>
               </div>
-              <div className="mt-4">
-                <div className="flex justify-between text-sm mb-1">
+              <div className="mt-3">
+                <div className="flex justify-between text-xs mb-1">
                   <span className="text-muted-foreground">Open Rate</span>
                   <span className="font-medium text-green-600">{openRate}%</span>
                 </div>
-                <Progress value={parseFloat(openRate)} className="h-2 [&>div]:bg-green-500" />
+                <Progress value={parseFloat(openRate)} className="h-1.5 [&>div]:bg-green-500" />
               </div>
             </CardContent>
           </Card>
 
           {/* Clicked */}
           <Card className="relative overflow-hidden">
-            <CardContent className="p-6">
+            <CardContent className="p-4">
               <div className="flex items-start justify-between">
                 <div>
-                  <p className="text-sm font-medium text-muted-foreground">Clicked</p>
-                  <h3 className="text-3xl font-bold mt-2 text-foreground">{campaign.clickedCount}</h3>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    {clickRate}% click rate
-                  </p>
+                  <p className="text-xs font-medium text-muted-foreground">Clicked</p>
+                  <h3 className="text-2xl font-bold mt-1 text-foreground">{clicked}</h3>
+                  <p className="text-xs text-muted-foreground mt-1">{clickRate}% click</p>
                 </div>
-                <div className="p-3 rounded-full bg-blue-100 dark:bg-blue-900/30">
-                  <MousePointerClick className="h-6 w-6 text-blue-600 dark:text-blue-400" />
+                <div className="p-2 rounded-full bg-blue-100 dark:bg-blue-900/30">
+                  <MousePointerClick className="h-5 w-5 text-blue-600 dark:text-blue-400" />
                 </div>
               </div>
-              <div className="mt-4">
-                <div className="flex justify-between text-sm mb-1">
+              <div className="mt-3">
+                <div className="flex justify-between text-xs mb-1">
                   <span className="text-muted-foreground">Click Rate</span>
                   <span className="font-medium text-blue-600">{clickRate}%</span>
                 </div>
-                <Progress value={parseFloat(clickRate)} className="h-2 [&>div]:bg-blue-500" />
+                <Progress value={parseFloat(clickRate)} className="h-1.5 [&>div]:bg-blue-500" />
               </div>
             </CardContent>
           </Card>
 
           {/* Bounced */}
           <Card className="relative overflow-hidden">
-            <CardContent className="p-6">
+            <CardContent className="p-4">
               <div className="flex items-start justify-between">
                 <div>
-                  <p className="text-sm font-medium text-muted-foreground">Bounced</p>
-                  <h3 className="text-3xl font-bold mt-2 text-foreground">{campaign.bouncedCount}</h3>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    {bounceRate}% bounce rate
-                  </p>
+                  <p className="text-xs font-medium text-muted-foreground">Bounced</p>
+                  <h3 className="text-2xl font-bold mt-1 text-foreground">{bounced}</h3>
+                  <p className="text-xs text-muted-foreground mt-1">{bounceRate}% bounce</p>
                 </div>
-                <div className="p-3 rounded-full bg-red-100 dark:bg-red-900/30">
-                  <AlertTriangle className="h-6 w-6 text-red-600 dark:text-red-400" />
+                <div className="p-2 rounded-full bg-red-100 dark:bg-red-900/30">
+                  <AlertTriangle className="h-5 w-5 text-red-600 dark:text-red-400" />
                 </div>
               </div>
-              <div className="mt-4">
-                <div className="flex justify-between text-sm mb-1">
-                  <span className="text-muted-foreground">Bounce Rate</span>
+              <div className="mt-3">
+                <div className="flex justify-between text-xs mb-1">
+                  <span className="text-muted-foreground">Bounce</span>
                   <span className="font-medium text-red-600">{bounceRate}%</span>
                 </div>
-                <Progress value={parseFloat(bounceRate)} className="h-2 [&>div]:bg-red-500" />
+                <Progress value={parseFloat(bounceRate)} className="h-1.5 [&>div]:bg-red-500" />
               </div>
             </CardContent>
           </Card>
 
           {/* Unsubscribed */}
           <Card className="relative overflow-hidden">
-            <CardContent className="p-6">
+            <CardContent className="p-4">
               <div className="flex items-start justify-between">
                 <div>
-                  <p className="text-sm font-medium text-muted-foreground">Unsubscribed</p>
-                  <h3 className="text-3xl font-bold mt-2 text-foreground">{campaign.unsubscribedCount}</h3>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    {unsubRate}% unsubscribe rate
-                  </p>
+                  <p className="text-xs font-medium text-muted-foreground">Unsubscribed</p>
+                  <h3 className="text-2xl font-bold mt-1 text-foreground">{unsub}</h3>
+                  <p className="text-xs text-muted-foreground mt-1">{unsubRate}% unsub</p>
                 </div>
-                <div className="p-3 rounded-full bg-red-100 dark:bg-red-900/30">
-                  <AlertTriangle className="h-6 w-6 text-red-600 dark:text-red-400" />
+                <div className="p-2 rounded-full bg-red-100 dark:bg-red-900/30">
+                  <AlertTriangle className="h-5 w-5 text-red-600 dark:text-red-400" />
                 </div>
               </div>
-              <div className="mt-4">
-                <div className="flex justify-between text-sm mb-1">
-                  <span className="text-muted-foreground">Unsubscribe Rate</span>
+              <div className="mt-3">
+                <div className="flex justify-between text-xs mb-1">
+                  <span className="text-muted-foreground">Unsub</span>
                   <span className="font-medium text-red-600">{unsubRate}%</span>
                 </div>
-                <Progress value={parseFloat(unsubRate)} className="h-2 [&>div]:bg-red-500" />
+                <Progress value={parseFloat(unsubRate)} className="h-1.5 [&>div]:bg-red-500" />
               </div>
             </CardContent>
           </Card>
         </div>
-        
 
         {/* Performance Summary */}
         <Card>
@@ -378,28 +397,28 @@ const CampaignResult = () => {
                 <div className="text-4xl font-bold text-primary">{deliveryRate}%</div>
                 <p className="text-sm text-muted-foreground mt-2">Delivery Rate</p>
                 <p className="text-xs text-muted-foreground mt-1">
-                  {campaign.sentCount - campaign.bouncedCount} of {campaign.totalRecipients} delivered
+                  {sent - bounced} of {total} delivered
                 </p>
               </div>
               <div className="text-center p-6 bg-muted/50 rounded-lg">
                 <div className="text-4xl font-bold text-green-600">{openRate}%</div>
                 <p className="text-sm text-muted-foreground mt-2">Open Rate</p>
                 <p className="text-xs text-muted-foreground mt-1">
-                  {campaign.openedCount} of {campaign.sentCount} opened
+                  {opened} of {sent} opened
                 </p>
               </div>
               <div className="text-center p-6 bg-muted/50 rounded-lg">
                 <div className="text-4xl font-bold text-blue-600">{clickRate}%</div>
                 <p className="text-sm text-muted-foreground mt-2">Click-Through Rate</p>
                 <p className="text-xs text-muted-foreground mt-1">
-                  {campaign.clickedCount} of {campaign.sentCount} clicked
+                  {clicked} of {sent} clicked
                 </p>
               </div>
             </div>
           </CardContent>
         </Card>
 
-        {/* Follow-up Settings (if enabled) */}
+        {/* Follow-up Settings */}
         {campaign.hasFollowup && (
           <Card>
             <CardHeader>
@@ -417,8 +436,8 @@ const CampaignResult = () => {
                 <div>
                   <p className="text-sm text-muted-foreground">Delay</p>
                   <p className="font-medium">
-                    {campaign.followupDelayHours 
-                      ? `${campaign.followupDelayHours} hours` 
+                    {campaign.followupDelayHours != null
+                      ? `${campaign.followupDelayHours} hours`
                       : 'N/A'}
                   </p>
                 </div>
