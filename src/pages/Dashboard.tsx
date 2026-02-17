@@ -58,7 +58,7 @@ const Dashboard = () => {
       <div className="fixed inset-y-0 left-0 w-64 bg-white shadow-lg border-r border-gray-200">
         <div className="flex items-center px-6 py-4 border-b border-gray-200">
           <h1 className="text-xl font-nunito font-bold" style={{ color: "#012970" }}>
-            MarketSkrap
+            MailSkrap
           </h1>
         </div>
         <nav className="mt-6">

@@ -273,7 +273,7 @@ const Auth = () => {
         <div className="text-center mb-8">
           <Link to="/" className="inline-flex items-center text-blue-700 hover:text-blue-900 mb-4 font-semibold">
             <ArrowLeft className="h-4 w-4 mr-2" />
-            Back to MarketSkrap
+            Back to MailSkrap
           </Link>
           <h1 className="text-3xl font-extrabold bg-gradient-to-r from-[#012970] to-blue-800 bg-clip-text text-transparent font-nunito">
             MailSkrap
