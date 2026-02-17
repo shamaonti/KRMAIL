@@ -67,8 +67,8 @@ type ApiLead = {
 
 const LeadsPage = () => {
   // ✅ set this to your backend URL (env first)
-  const API_BASE =
-    (import.meta as any)?.env?.VITE_API_BASE_URL || "http://localhost:3001";
+const API_BASE =
+  import.meta.env.VITE_API_URL || "http://localhost:3001";
 
   const [selectedLeads, setSelectedLeads] = useState<number[]>([]);
   const [filterStatus, setFilterStatus] = useState("all");
