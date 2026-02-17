@@ -19,6 +19,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useNavigate } from "react-router-dom";
+const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:3001";
 
 // Types
 interface Lead {
@@ -58,7 +59,6 @@ interface Campaign {
   totalRecipients?: number;
 }
 
-const API_BASE_URL = 'http://localhost:3001';
 
 // datetime-local value → "YYYY-MM-DD HH:MM:SS" (DB format, local as-is)
 function toDbDatetime(localVal: string): string {

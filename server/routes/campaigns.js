@@ -48,7 +48,7 @@ function getFollowupSettings(body) {
 function normalizeFollowupCondition(raw) {
   const v = String(raw || "").trim().toLowerCase();
 
-  if (v === "not_opened" || v === "not_clicked" || v === "always" || v === "no_reply") return v;
+  if (v === "not_opened" || v === "not_clicked" || v === "always") return v;
 
   if (v.includes("not opened")) return "not_opened";
   if (v.includes("not clicked")) return "not_clicked";
@@ -368,6 +368,10 @@ router.post("/:id/send", async (req, res) => {
     if (!campaignId) return res.status(400).json({ success: false, message: "Invalid campaign ID" });
 
     const [[campaign]] = await conn.query(`SELECT * FROM email_campaigns WHERE id = ?`, [campaignId]);
+
+    if (!campaign || campaign.user_id !== req.user.id) {
+      return res.status(403).json({ success: false, message: "Forbidden" });
+    }
     if (!campaign) return res.status(404).json({ success: false, message: "Campaign not found" });
 
     const userId = toInt(campaign.user_id);

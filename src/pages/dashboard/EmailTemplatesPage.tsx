@@ -26,6 +26,7 @@ import {
   Wand2,
   FileText,
 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 
 /**
  * DB schema fields (email_templates):
@@ -65,7 +66,9 @@ export type EmailTemplateUI = {
   lastModified?: string;
 };
 
-const API_BASE = "http://localhost:3001/api/email-templates";
+const API_BASE =
+  (import.meta.env.VITE_API_URL || "http://localhost:3001") +
+  "/api/email-templates";
 
 // ---- helpers (category <-> template_type) ----
 function categoryToTemplateType(cat: EmailTemplateUI["category"]): TemplateType {
