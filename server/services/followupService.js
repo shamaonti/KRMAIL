@@ -1,231 +1,205 @@
 const emailService = require("./emailService");
-const databaseService = require("./databaseService");
+const pool = require("../db");
 
 class FollowupService {
   constructor() {
     this.isProcessing = false;
     this.processingInterval = null;
-    this.inMemoryFollowups = [];
   }
 
+  // =========================
+  // START CRON PROCESSOR
+  // =========================
   startProcessor() {
     if (this.processingInterval) return;
 
     this.processingInterval = setInterval(async () => {
       await this.processFollowupQueue();
-    }, 1 * 60 * 1000);
+    }, 60 * 1000);
 
-    console.log("🔄 Follow-up email processor started (checking every 1 minute)");
+    console.log("🔄 Follow-up processor started (1 min interval)");
   }
 
   stopProcessor() {
     if (this.processingInterval) {
       clearInterval(this.processingInterval);
       this.processingInterval = null;
-      console.log("⏹️ Follow-up email processor stopped");
     }
   }
 
+  // =========================
+  // PROCESS QUEUE
+  // =========================
   async processFollowupQueue() {
     if (this.isProcessing) return;
 
     this.isProcessing = true;
 
     try {
-      const pendingFollowups = await this.getPendingFollowups();
-      for (const followup of pendingFollowups) {
+      const followups = await this.getPendingFollowups();
+
+      for (const followup of followups) {
         await this.processFollowup(followup);
       }
-    } catch (error) {
-      console.error("Error processing follow-up queue:", error);
+
+    } catch (err) {
+      console.error("Follow-up processing error:", err);
     } finally {
       this.isProcessing = false;
     }
   }
 
+  // =========================
+  // GET PENDING FOLLOWUPS
+  // =========================
   async getPendingFollowups() {
-    try {
-      if (databaseService.isConnected) {
-        return await databaseService.getPendingFollowups();
-      }
-    } catch (error) {
-      console.log("📝 Database not available, using in-memory follow-up storage");
-    }
-    return this.getInMemoryPendingFollowups();
+    const [rows] = await pool.execute(`
+      SELECT fq.*, et.content as template_content
+      FROM followup_queue fq
+      LEFT JOIN email_templates et ON fq.followup_template_id = et.id
+      WHERE fq.status = 'pending'
+      AND fq.scheduled_at <= NOW()
+      ORDER BY fq.scheduled_at ASC
+    `);
+
+    return rows;
   }
 
+  // =========================
+  // PROCESS SINGLE FOLLOWUP
+  // =========================
   async processFollowup(followup) {
     try {
-      console.log(`📧 Processing follow-up for ${followup.email} (condition=${followup.condition})`);
+      console.log(`📧 Processing follow-up for ${followup.email}`);
 
-      const emailLogId = followup.email_log_id ?? null;
+      const emailLogId = followup.email_log_id;
 
-      // ✅ Condition: not_opened (skip check if email_log_id is null)
+      // Condition: not_opened
       if (followup.condition === "not_opened" && emailLogId) {
-        const wasOpened = await this.safeCheckOpened(emailLogId);
-        if (wasOpened) {
-          console.log(`📧 Skipping follow-up for ${followup.email} - original email was opened`);
-          await this.updateFollowupStatus(followup.id, "cancelled", "Original email was opened");
+        const opened = await this.checkEmailOpened(emailLogId);
+        if (opened) {
+          await this.updateFollowupStatus(followup.id, "cancelled", "Email opened");
           return;
         }
       }
 
-      // ✅ Condition: not_clicked (skip check if email_log_id is null)
+      // Condition: not_clicked
       if (followup.condition === "not_clicked" && emailLogId) {
-        const wasClicked = await this.safeCheckClicked(emailLogId);
-        if (wasClicked) {
-          console.log(`📧 Skipping follow-up for ${followup.email} - original email was clicked`);
-          await this.updateFollowupStatus(followup.id, "cancelled", "Original email was clicked");
+        const clicked = await this.checkEmailClicked(emailLogId);
+        if (clicked) {
+          await this.updateFollowupStatus(followup.id, "cancelled", "Email clicked");
           return;
         }
       }
 
-      // ✅ Condition: no_reply (NEW)
-      // If reply exists -> cancel. If no reply -> send.
-      if (followup.condition === "no_reply") {
-        const replied = await this.safeCheckReplied({
-          campaignId: followup.campaign_id,
-          email: followup.email,
-          emailLogId,
-        });
-
-        if (replied) {
-          console.log(`📧 Skipping follow-up for ${followup.email} - reply received`);
-          await this.updateFollowupStatus(followup.id, "cancelled", "Reply received");
-          return;
-        }
-      }
-
-      // Build follow-up email body
-      let followupContent = followup.template_content;
-      if (!followupContent) {
-        const minutesAgo = Math.floor(
-          (Date.now() - new Date(followup.createdAt || followup.created_at || Date.now()).getTime()) /
-            (1000 * 60)
-        );
-        followupContent = `
-          <h2>Follow-up Email</h2>
-          <p>Hi there,</p>
-          <p>This is a follow-up email sent ${minutesAgo} minutes after the original email.</p>
-          <p>Thank you for your interest!</p>
-          <p>Best regards,<br/>The MailSkrap Team</p>
-        `;
-      }
+      // Build email content
+      const content =
+        followup.template_content ||
+        `<p>This is a follow-up email.</p>`;
 
       const result = await emailService.sendEmail({
         to: followup.email,
         subject:
           followup.followup_subject ||
-          "Follow-up: " + (followup.original_subject || "Your previous email"),
-        htmlBody: followupContent,
-        from: null,
+          "Follow-up: " + (followup.original_subject || ""),
+        htmlBody: content,
       });
 
       if (result.success) {
         await this.updateFollowupStatus(followup.id, "sent");
-        console.log(`✅ Follow-up sent successfully to ${followup.email}`);
+        console.log(`✅ Follow-up sent to ${followup.email}`);
       } else {
         await this.updateFollowupStatus(followup.id, "failed", result.error);
-        console.error(`❌ Failed to send follow-up to ${followup.email}:`, result.error);
       }
-    } catch (error) {
-      console.error(`❌ Error processing follow-up for ${followup.email}:`, error);
-      await this.updateFollowupStatus(followup.id, "failed", error.message);
+
+    } catch (err) {
+      console.error("Follow-up error:", err);
+      await this.updateFollowupStatus(followup.id, "failed", err.message);
     }
   }
 
-  async safeCheckOpened(emailLogId) {
-    try {
-      if (databaseService.isConnected) return await databaseService.checkEmailOpened(emailLogId);
-    } catch {}
-    return await this.checkEmailOpenedInMemory(emailLogId);
+  // =========================
+  // CHECK OPENED
+  // =========================
+  async checkEmailOpened(emailLogId) {
+    const [rows] = await pool.execute(
+      "SELECT opened_at FROM email_logs WHERE id = ? AND opened_at IS NOT NULL",
+      [emailLogId]
+    );
+    return rows.length > 0;
   }
 
-  async safeCheckClicked(emailLogId) {
-    try {
-      if (databaseService.isConnected) return await databaseService.checkEmailClicked(emailLogId);
-    } catch {}
-    return await this.checkEmailClickedInMemory(emailLogId);
+  // =========================
+  // CHECK CLICKED
+  // =========================
+  async checkEmailClicked(emailLogId) {
+    const [rows] = await pool.execute(
+      "SELECT clicked_at FROM email_logs WHERE id = ? AND clicked_at IS NOT NULL",
+      [emailLogId]
+    );
+    return rows.length > 0;
   }
 
-  async safeCheckReplied({ campaignId, email, emailLogId }) {
-    try {
-      if (databaseService.isConnected) {
-        return await databaseService.checkEmailReplied({ campaignId, email, emailLogId });
-      }
-    } catch {}
-    return await this.checkEmailRepliedInMemory({ campaignId, email, emailLogId });
-  }
-
-  async updateFollowupStatus(followupId, status, errorMessage = null) {
-    try {
-      if (databaseService.isConnected) {
-        return await databaseService.updateFollowupStatus(followupId, status, errorMessage);
-      }
-    } catch {
-      console.log("📝 Database not available, updating in-memory status");
-    }
-    return this.updateInMemoryFollowupStatus(followupId, status, errorMessage);
-  }
-
-  async scheduleFollowup(followupData) {
-    try {
-      if (databaseService.isConnected) {
-        return await databaseService.scheduleFollowup(followupData);
-      }
-    } catch {
-      console.log("📝 Database not available, scheduling in-memory follow-up");
-    }
-    return this.scheduleInMemoryFollowup(followupData);
-  }
-
-  // In-memory helpers
-  getInMemoryPendingFollowups() {
-    const now = new Date();
-    return this.inMemoryFollowups.filter(
-      (f) => f.status === "pending" && new Date(f.scheduledAt) <= now
+  // =========================
+  // UPDATE STATUS
+  // =========================
+  async updateFollowupStatus(id, status, errorMessage = null) {
+    await pool.execute(
+      `
+      UPDATE followup_queue
+      SET status = ?,
+          sent_at = CASE WHEN ? = 'sent' THEN NOW() ELSE NULL END,
+          error_message = ?
+      WHERE id = ?
+      `,
+      [status, status, errorMessage, id]
     );
   }
 
-  scheduleInMemoryFollowup(followupData) {
-    const followup = {
-      id: `followup_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      ...followupData,
-      status: "pending",
-      createdAt: new Date().toISOString(),
-      scheduledAt:
-        followupData.scheduledAt ||
-        new Date(Date.now() + followupData.delayHours * 60 * 60 * 1000).toISOString(),
+  // =========================
+  // SCHEDULE FOLLOWUP
+  // =========================
+  async scheduleFollowup(data) {
+    const {
+      campaignId,
+      contactId,
+      emailLogId,
+      userId,
+      email,
+      followupTemplateId,
+      followupSubject,
+      delayHours,
+      condition,
+    } = data;
+
+    const scheduledAt = new Date();
+    scheduledAt.setHours(scheduledAt.getHours() + delayHours);
+
+    const [result] = await pool.execute(
+      `
+      INSERT INTO followup_queue
+      (campaign_id, contact_id, email_log_id, user_id, email,
+       followup_template_id, followup_subject, scheduled_at, condition, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+      `,
+      [
+        campaignId,
+        contactId,
+        emailLogId,
+        userId,
+        email,
+        followupTemplateId,
+        followupSubject,
+        scheduledAt,
+        condition || null,
+      ]
+    );
+
+    return {
+      success: true,
+      id: result.insertId,
+      scheduledAt,
     };
-
-    this.inMemoryFollowups.push(followup);
-    console.log(`📅 Scheduled in-memory follow-up for ${followup.email} at ${followup.scheduledAt}`);
-
-    return { success: true, id: followup.id, scheduledAt: followup.scheduledAt };
-  }
-
-  updateInMemoryFollowupStatus(followupId, status, errorMessage = null) {
-    const followup = this.inMemoryFollowups.find((f) => f.id === followupId);
-    if (followup) {
-      followup.status = status;
-      followup.errorMessage = errorMessage;
-      if (status === "sent") followup.sentAt = new Date().toISOString();
-      console.log(`📝 Updated in-memory follow-up ${followupId} status to ${status}`);
-      return true;
-    }
-    return false;
-  }
-
-  async checkEmailOpenedInMemory() {
-    return false;
-  }
-
-  async checkEmailClickedInMemory() {
-    return false;
-  }
-
-  async checkEmailRepliedInMemory() {
-    return false;
   }
 }
 

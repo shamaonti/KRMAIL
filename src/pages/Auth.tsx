@@ -24,6 +24,7 @@ const Auth = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [showOTPVerification, setShowOTPVerification] = useState(false);
   const [userEmail, setUserEmail] = useState('');
+  const [activeTab, setActiveTab] = useState('signin');
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -106,6 +107,9 @@ const Auth = () => {
         title: "Account Created!",
         description: "You can now sign in with your email and password."
       });
+
+      setActiveTab("signin");
+
     } catch (error: any) {
       console.error('Sign up error:', error);
       toast({
@@ -290,7 +294,7 @@ const Auth = () => {
           </CardHeader>
 
           <CardContent>
-            <Tabs defaultValue="signin" className="w-full">
+            <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
               <TabsList className="grid w-full grid-cols-2 mb-6 bg-blue-50">
                 <TabsTrigger value="signin">Sign In</TabsTrigger>
                 <TabsTrigger value="signup">Sign Up</TabsTrigger>
