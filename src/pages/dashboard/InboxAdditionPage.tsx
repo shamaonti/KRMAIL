@@ -8,6 +8,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { Eye, EyeOff, TestTube } from "lucide-react";
+const API_BASE =
+  (import.meta.env.VITE_API_URL || "http://localhost:3001") +
+  "/api/emailcamp";
 
 const InboxAdditionPage = () => {
   const [showPassword, setShowPassword] = useState({});
@@ -91,7 +94,7 @@ const InboxAdditionPage = () => {
     try {
       const userId = getCurrentUserId();
       const res = await fetch(
-        `http://localhost:3001/api/emailcamp/details/${userId}`,
+        `${API_BASE}/details/${userId}`,
         {
           method: 'GET',
           credentials: 'include',
@@ -184,7 +187,7 @@ const InboxAdditionPage = () => {
           intervalMinutes: timeBetweenEmails[0]
         };
 
-        const response = await fetch('http://localhost:3001/api/emailcamp/save', {
+        const response = await fetch(`${API_BASE}/save`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
