@@ -369,23 +369,11 @@ router.post("/:id/send", async (req, res) => {
 
     const [[campaign]] = await conn.query(`SELECT * FROM email_campaigns WHERE id = ?`, [campaignId]);
 
-    if (!campaign || campaign.user_id !== req.user.id) {
-      return res.status(403).json({ success: false, message: "Forbidden" });
-    }
     if (!campaign) return res.status(404).json({ success: false, message: "Campaign not found" });
 
     const userId = toInt(campaign.user_id);
     if (!userId) return res.status(400).json({ success: false, message: "Campaign has invalid user_id" });
 
-    /**
-     * ✅ STEP 1: Pending leads ko unsubscribed mark karo
-     *
-     * scope='all'      → sirf user_id match kaafi hai (campaign_id koi bhi ho)
-     * scope='campaign' → user_id + campaign_id dono match karna chahiye
-     *
-     * CAST fix: unsubscribes.campaign_id = bigint, campaign_data.campaign_id = int
-     * Type mismatch ki wajah se match fail hota tha — CAST se fix hota hai
-     */
     await conn.query(
       `UPDATE campaign_data cd
        JOIN unsubscribes u
