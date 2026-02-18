@@ -6,7 +6,7 @@ const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
 const session = require('express-session');
 const path = require("path");
-require("dotenv").config({ path: path.join(__dirname, "config.env") });
+require("dotenv").config({ path: path.join(__dirname, ".env") });
 
 console.log("APP_URL =", process.env.APP_URL);
 

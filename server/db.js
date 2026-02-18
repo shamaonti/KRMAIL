@@ -7,7 +7,7 @@ if (
   !process.env.DB_USER ||
   !process.env.DB_NAME
 ) {
-  throw new Error("❌ Missing required database environment variables");
+  throw new Error(" Missing required database environment variables");
 }
 
 const pool = mysql.createPool({
