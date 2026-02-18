@@ -115,36 +115,44 @@ router.post("/", async (req, res) => {
 
     const maxLevel = settings?.maxLevel != null ? toInt(settings.maxLevel) : 100;
 
+    const timezone = settings?.timezone || "UTC";
+    const sendingFrom = settings?.sendingHours?.from || "09:00";
+    const sendingTo = settings?.sendingHours?.to || "17:00";
+
+
     // ✅ Schedule now if runAt missing
     const scheduledAt = runAt ? new Date(runAt) : new Date();
 
     const [result] = await conn.query(
-      `INSERT INTO email_campaigns
-       (user_id, name, subject, content, template_id,
-        status, scheduled_at, total_recipients,
-        has_followup, followup_template_id,
-        followup_subject, followup_delay_hours, followup_condition,
-        delay_ms, max_level)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        userId,
-        name,
-        subject,
-        template.content || "",
-        templateId || null,
-        "scheduled",
-        scheduledAt,
-        leads.length,
-        hasFollowup,
-        followupTemplateId,
-        followupSubject,
-        followupDelayHours,
-        followupCondition,
-        Number.isFinite(delayBetweenEmails) ? delayBetweenEmails : 200,
-        Number.isFinite(maxLevel) ? maxLevel : 100,
-      ]
-    );
-
+    `INSERT INTO email_campaigns
+    (user_id, name, subject, content, template_id,
+      status, scheduled_at, total_recipients,
+      has_followup, followup_template_id,
+      followup_subject, followup_delay_hours, followup_condition,
+      delay_ms, max_level, time_zone, sending_from, sending_to)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      userId,
+      name,
+      subject,
+      template.content || "",
+      templateId || null,
+      "scheduled",
+      scheduledAt,
+      leads.length,
+      hasFollowup,
+      followupTemplateId,
+      followupSubject,
+      followupDelayHours,
+      followupCondition,
+      Number.isFinite(delayBetweenEmails) ? delayBetweenEmails : 200,
+      Number.isFinite(maxLevel) ? maxLevel : 100,
+      timezone,
+      sendingFrom,
+      sendingTo
+    ]
+  );
+  
     const campaignId = result.insertId;
 
     const values = leads
