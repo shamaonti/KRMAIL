@@ -19,10 +19,10 @@ const InboxAdditionPage = () => {
 
   const [formData, setFormData] = useState({
     useDifferentImap: false,
-    signature: ''
+    // ✅ signature yahan se HATA diya — ab har config mein hoga
   });
 
-  // ✅ Combined configs - ek ID ke liye SMTP + IMAP dono
+  // ✅ Combined configs - ek ID ke liye SMTP + IMAP + Signature teeno
   const [emailConfigs, setEmailConfigs] = useState([
     {
       id: 1,
@@ -41,7 +41,9 @@ const InboxAdditionPage = () => {
       imapPassword: '',
       imapHost: '',
       imapPort: '993',
-      imapSecurity: 'ssl'
+      imapSecurity: 'ssl',
+      // ✅ Per-account signature
+      signature: ''
     }
   ]);
 
@@ -65,7 +67,9 @@ const InboxAdditionPage = () => {
       imapPassword: '',
       imapHost: '',
       imapPort: '993',
-      imapSecurity: 'ssl'
+      imapSecurity: 'ssl',
+      // ✅ Naye account ka apna alag signature
+      signature: ''
     }]);
   };
 
@@ -124,7 +128,9 @@ const InboxAdditionPage = () => {
         imapPassword: '',
         imapHost: d.imap_host || '',
         imapPort: String(d.imap_port || '993'),
-        imapSecurity: d.imap_security || 'ssl'
+        imapSecurity: d.imap_security || 'ssl',
+        // ✅ Har account ka apna signature DB se load hoga
+        signature: d.signature || ''
       }));
 
       setEmailConfigs(configs);
@@ -133,7 +139,7 @@ const InboxAdditionPage = () => {
       const d0 = result.data[0];
       setFormData({
         useDifferentImap: d0.use_different_imap === 1,
-        signature: d0.signature || ''
+        // ✅ signature yahan se hata diya
       });
 
       setMessagesPerDay([Number(d0.daily_limit) || 50]);
@@ -182,7 +188,8 @@ const InboxAdditionPage = () => {
           imapSecurity: config.imapSecurity,
           // Settings
           useDifferentImap: formData.useDifferentImap ? 1 : 0,
-          signature: formData.signature,
+          // ✅ Har config ka apna signature save hoga
+          signature: config.signature,
           dailyLimit: messagesPerDay[0],
           intervalMinutes: timeBetweenEmails[0]
         };
@@ -346,7 +353,7 @@ const InboxAdditionPage = () => {
                   </div>
 
                   {/* IMAP SETTINGS */}
-                  <div className="mb-2">
+                  <div className="mb-4">
                     <h4 className="text-sm font-semibold text-gray-700 mb-3 border-b pb-2">
                       📥 IMAP Settings (Receiving)
                     </h4>
@@ -409,11 +416,23 @@ const InboxAdditionPage = () => {
                       </div>
                     </div>
                   </div>
+
+                  {/* ✅ EMAIL SIGNATURE — Per Account, Card ke andar */}
+                  <div>
+                    <h4 className="text-sm font-semibold text-gray-700 mb-2 border-b pb-2">
+                      ✍️ Email Signature
+                    </h4>
+                    <Textarea
+                      placeholder={`Write signature for ${config.fromEmail || 'this account'}...`}
+                      value={config.signature}
+                      onChange={e => handleConfigChange(config.id, 'signature', e.target.value)}
+                      rows={3}
+                    />
+                  </div>
+
                 </div>
               ))}
             </div>
-
-            <hr />
 
             {/* EMAIL SETTINGS */}
             <div>
@@ -427,7 +446,7 @@ const InboxAdditionPage = () => {
                   <Slider 
                     value={messagesPerDay} 
                     onValueChange={setMessagesPerDay} 
-                    max={480} 
+                    max={20000} 
                     min={1} 
                   />
                 </div>
@@ -443,16 +462,6 @@ const InboxAdditionPage = () => {
                     min={3} 
                   />
                 </div>
-              </div>
-
-              <div className="mt-4">
-                <Label className="text-sm font-semibold">Email Signature</Label>
-                <Textarea 
-                  placeholder="Write your email signature here..." 
-                  value={formData.signature} 
-                  onChange={e => handleInputChange('signature', e.target.value)}
-                  rows={4}
-                />
               </div>
             </div>
 

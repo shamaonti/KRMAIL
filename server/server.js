@@ -156,7 +156,7 @@ app.use((err, req, res, next) => {
 
 /* ---------------- START SERVER ---------------- */
 app.listen(PORT, () => {
-  console.log(`🚀 MailSkrap Backend running on port ${PORT}`);
+  console.log(`🚀 KRMail Backend running on port ${PORT}`);
   console.log(`🗄️  DB: ${process.env.DB_NAME}`);
   console.log(`🌍 Env: ${process.env.NODE_ENV || 'development'}`);
   console.log(`❤️  Health: http://localhost:${PORT}/health`);

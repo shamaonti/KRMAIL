@@ -135,7 +135,7 @@ const Auth = () => {
 
       toast({
         title: "Welcome Back!",
-        description: "Successfully signed in to MailSkrap"
+        description: "Successfully signed in to KRMail"
       });
 
       if (result?.user) {
@@ -255,7 +255,7 @@ const Auth = () => {
         <div className="w-full max-w-md">
           <div className="text-center mb-8">
             <h1 className="text-3xl font-extrabold bg-gradient-to-r from-[#012970] to-blue-800 bg-clip-text text-transparent font-nunito">
-              MailSkrap
+              KRMail
             </h1>
             <p className="text-gray-700 mt-2 font-medium">Advanced Email Marketing Platform</p>
           </div>
@@ -275,12 +275,12 @@ const Auth = () => {
       <div className="w-full max-w-md">
         {/* Header */}
         <div className="text-center mb-8">
-          <Link to="/" className="inline-flex items-center text-blue-700 hover:text-blue-900 mb-4 font-semibold">
+          <Link to="https://crm.earnwealth.co.in/admin/login" className="inline-flex items-center text-blue-700 hover:text-blue-900 mb-4 font-semibold">
             <ArrowLeft className="h-4 w-4 mr-2" />
-            Back to MailSkrap
+            Back to CRM
           </Link>
           <h1 className="text-3xl font-extrabold bg-gradient-to-r from-[#012970] to-blue-800 bg-clip-text text-transparent font-nunito">
-            MailSkrap
+            KRMail
           </h1>
           <p className="text-gray-700 mt-2 font-medium">Advanced Email Marketing Platform</p>
         </div>
@@ -368,7 +368,8 @@ const Auth = () => {
                   </Button>
                 </form>
 
-                <div className="mt-6">
+                {/* google sign up commit */}
+                {/* <div className="mt-6">
                   <div className="relative">
                     <div className="absolute inset-0 flex items-center">
                       <div className="w-full border-t border-gray-300" />
@@ -410,7 +411,8 @@ const Auth = () => {
                       Microsoft
                     </Button>
                   </div>
-                </div>
+                </div> */}
+
               </TabsContent>
 
               {/* Sign Up Tab */}

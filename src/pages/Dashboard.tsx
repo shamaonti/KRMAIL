@@ -59,7 +59,7 @@ const Dashboard = () => {
       <div className="fixed inset-y-0 left-0 w-64 bg-white shadow-lg border-r border-gray-200">
         <div className="flex items-center px-6 py-4 border-b border-gray-200">
           <h1 className="text-xl font-nunito font-bold" style={{ color: "#012970" }}>
-            MailSkrap
+            KRMail
           </h1>
         </div>
         <nav className="mt-6">
@@ -308,6 +308,7 @@ const DashboardHome = () => {
             </CardContent>
           </Card>
 
+
           {/* Quick Actions */}
           <Card className="border border-gray-200 shadow-sm">
             <CardHeader>
@@ -315,35 +316,54 @@ const DashboardHome = () => {
                 Quick Actions
               </CardTitle>
             </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
+
+            <CardContent className="pt-2">
+              <div className="space-y-4">
+
                 <Link to="/dashboard/campaign">
-                  <Button className="w-full justify-start text-white font-medium" style={{ backgroundColor: "#1e3a8a" }}>
+                  <Button
+                    className="w-full justify-start h-11 px-4 text-white font-medium"
+                    style={{ backgroundColor: "#1e3a8a" }}
+                  >
                     <Mail className="mr-2 h-4 w-4" />
                     Create New Campaign
                   </Button>
                 </Link>
+
                 <Link to="/dashboard/inbox-addition">
-                  <Button variant="outline" className="w-full justify-start border-gray-300 hover:bg-gray-50">
+                  <Button
+                    variant="outline"
+                    className="w-full justify-start h-11 px-4 border-gray-300 hover:bg-gray-50"
+                  >
                     <Plus className="mr-2 h-4 w-4" />
                     Add Email Account
                   </Button>
                 </Link>
+
                 <Link to="/dashboard/email-templates">
-                  <Button variant="outline" className="w-full justify-start border-gray-300 hover:bg-gray-50">
+                  <Button
+                    variant="outline"
+                    className="w-full justify-start h-11 px-4 border-gray-300 hover:bg-gray-50"
+                  >
                     <FileText className="mr-2 h-4 w-4" />
                     Create Email Template
                   </Button>
                 </Link>
+
                 <Link to="/dashboard/leads">
-                  <Button variant="outline" className="w-full justify-start border-gray-300 hover:bg-gray-50">
+                  <Button
+                    variant="outline"
+                    className="w-full justify-start h-11 px-4 border-gray-300 hover:bg-gray-50"
+                  >
                     <Users className="mr-2 h-4 w-4" />
                     Import Leads
                   </Button>
                 </Link>
+
               </div>
             </CardContent>
           </Card>
+
         </div>
       </main>
     </>
