@@ -36,6 +36,54 @@ function normEmail(email) {
 }
 
 /**
+ * ✅ FIX: Case-insensitive name extraction from lead object
+ * CSV columns can be "Name", "name", "NAME", "firstName", "FirstName" etc.
+ */
+function extractName(lead) {
+  if (!lead || typeof lead !== "object") return null;
+
+  // Direct lowercase match first
+  if (typeof lead.name === "string" && lead.name.trim()) return lead.name.trim();
+
+  // Case-insensitive key search
+  const keys = Object.keys(lead);
+
+  // Try "Name", "NAME", etc.
+  const nameKey = keys.find(k => k.toLowerCase() === "name");
+  if (nameKey && typeof lead[nameKey] === "string" && lead[nameKey].trim()) {
+    return lead[nameKey].trim();
+  }
+
+  // Try firstName + lastName combination
+  const firstKey = keys.find(k => k.toLowerCase() === "firstname" || k.toLowerCase() === "first_name");
+  const lastKey = keys.find(k => k.toLowerCase() === "lastname" || k.toLowerCase() === "last_name");
+
+  const first = firstKey ? String(lead[firstKey] || "").trim() : "";
+  const last = lastKey ? String(lead[lastKey] || "").trim() : "";
+  const full = `${first} ${last}`.trim();
+  if (full) return full;
+
+  return null;
+}
+
+/**
+ * ✅ FIX: Case-insensitive email extraction
+ */
+function extractEmail(lead) {
+  if (!lead || typeof lead !== "object") return null;
+
+  if (typeof lead.email === "string" && lead.email.trim()) return lead.email.trim();
+
+  const keys = Object.keys(lead);
+  const emailKey = keys.find(k => k.toLowerCase() === "email");
+  if (emailKey && typeof lead[emailKey] === "string" && lead[emailKey].trim()) {
+    return lead[emailKey].trim();
+  }
+
+  return null;
+}
+
+/**
  * Normalize followupSettings from different possible frontend keys.
  */
 function getFollowupSettings(body) {
@@ -119,48 +167,51 @@ router.post("/", async (req, res) => {
     const sendingFrom = settings?.sendingHours?.from || "09:00";
     const sendingTo = settings?.sendingHours?.to || "17:00";
 
-
     // ✅ Schedule now if runAt missing
     const scheduledAt = runAt ? new Date(runAt) : new Date();
 
     const [result] = await conn.query(
-    `INSERT INTO email_campaigns
-    (user_id, name, subject, content, template_id,
-      status, scheduled_at, total_recipients,
-      has_followup, followup_template_id,
-      followup_subject, followup_delay_hours, followup_condition,
-      delay_ms, max_level, time_zone, sending_from, sending_to)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      userId,
-      name,
-      subject,
-      template.content || "",
-      templateId || null,
-      "scheduled",
-      scheduledAt,
-      leads.length,
-      hasFollowup,
-      followupTemplateId,
-      followupSubject,
-      followupDelayHours,
-      followupCondition,
-      Number.isFinite(delayBetweenEmails) ? delayBetweenEmails : 200,
-      Number.isFinite(maxLevel) ? maxLevel : 100,
-      timezone,
-      sendingFrom,
-      sendingTo
-    ]
-  );
-  
+      `INSERT INTO email_campaigns
+      (user_id, name, subject, content, template_id,
+        status, scheduled_at, total_recipients,
+        has_followup, followup_template_id,
+        followup_subject, followup_delay_hours, followup_condition,
+        delay_ms, max_level, time_zone, sending_from, sending_to)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        userId,
+        name,
+        subject,
+        template.content || "",
+        templateId || null,
+        "scheduled",
+        scheduledAt,
+        leads.length,
+        hasFollowup,
+        followupTemplateId,
+        followupSubject,
+        followupDelayHours,
+        followupCondition,
+        Number.isFinite(delayBetweenEmails) ? delayBetweenEmails : 200,
+        Number.isFinite(maxLevel) ? maxLevel : 100,
+        timezone,
+        sendingFrom,
+        sendingTo
+      ]
+    );
+
     const campaignId = result.insertId;
 
+    // ✅ FIX: extractEmail() + extractName() use karo — case-insensitive
     const values = leads
-      .filter((l) => l && typeof l.email === "string" && l.email.trim())
+      .filter((l) => {
+        const email = extractEmail(l);
+        return email && email.trim();
+      })
       .map((l) => [
         campaignId,
-        l.email.trim(),
-        typeof l.name === "string" && l.name.trim() ? l.name.trim() : null,
+        extractEmail(l).trim(),
+        extractName(l),          // ✅ "Name", "name", "NAME" sab handle hoga
         JSON.stringify(l),
       ]);
 
@@ -309,7 +360,6 @@ router.get("/:id", async (req, res) => {
     const rows = await q(
       `SELECT
          ec.*,
-         -- ✅ campaign_data se live unsubscribed count
          (
            SELECT COUNT(*)
            FROM campaign_data cd
@@ -362,12 +412,6 @@ router.get("/:id", async (req, res) => {
 /**
  * ✅ MANUAL SEND
  * POST /api/campaigns/:id/send
- *
- * ✅ scope='all'      → us user ke kisi bhi campaign mein block
- * ✅ scope='campaign' → sirf is campaign mein block
- * ✅ CAST fix — bigint vs int type mismatch handle
- * ✅ id-based update + status='pending' guard (unsubscribed kabhi overwrite nahi hoga)
- * ✅ unsubscribed_count saved to email_campaigns
  */
 router.post("/:id/send", async (req, res) => {
   const conn = await db.getConnection();
@@ -400,7 +444,6 @@ router.post("/:id/send", async (req, res) => {
       [userId, campaignId]
     );
 
-    // ✅ STEP 2: Sirf pending leads fetch karo (id bhi select karo)
     const [leads] = await conn.query(
       `SELECT id, email, name
        FROM campaign_data
@@ -409,7 +452,6 @@ router.post("/:id/send", async (req, res) => {
     );
 
     if (!leads.length) {
-      // Sab unsubscribed the — count update karo aur return karo
       const [unsubResult] = await conn.query(
         `SELECT COUNT(*) as cnt FROM campaign_data WHERE campaign_id = ? AND status = 'unsubscribed'`,
         [campaignId]
@@ -467,8 +509,6 @@ router.post("/:id/send", async (req, res) => {
 
       const smtpMessageId = info?.messageId || null;
 
-      // ✅ id use karo + status='pending' guard
-      // Unsubscribed rows kabhi 'sent' se overwrite nahi honge
       await conn.query(
         `UPDATE campaign_data
          SET status = 'sent',
@@ -482,7 +522,6 @@ router.post("/:id/send", async (req, res) => {
       sentCount++;
     }
 
-    // ✅ Final: unsubscribed_count bhi save karo
     const [unsubResult] = await conn.query(
       `SELECT COUNT(*) as cnt FROM campaign_data WHERE campaign_id = ? AND status = 'unsubscribed'`,
       [campaignId]
