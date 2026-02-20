@@ -7,15 +7,6 @@ const db = require("../db");
 const { createTransporter } = require("../helpers/mailer");
 const { sign } = require("../helpers/unsubscribeToken");
 
-/**
- * EMAIL SCHEDULER SERVICE
- * ✅ scope='all'     → us user ke kisi bhi campaign mein email nahi jayegi
- * ✅ scope='campaign' → sirf us specific campaign mein block hogi
- * ✅ Unsubscribed leads NEVER overwritten with 'sent' (id + status guard)
- * ✅ unsubscribed_count correctly saved after each batch + final
- * ✅ daily_limit respected per email account
- * ✅ Distributes evenly across accounts based on max_level
- */
 class EmailScheduler {
   constructor() {
     this.isProcessing = false;
@@ -39,15 +30,8 @@ class EmailScheduler {
     });
   }
 
-  pause() {
-    this.isPaused = true;
-    console.log("⏸️ Scheduler paused");
-  }
-
-  resume() {
-    this.isPaused = false;
-    console.log("▶️ Scheduler resumed");
-  }
+  pause() { this.isPaused = true; console.log("⏸️ Scheduler paused"); }
+  resume() { this.isPaused = false; console.log("▶️ Scheduler resumed"); }
 
   stop() {
     if (this.cronJob) {
@@ -66,7 +50,8 @@ class EmailScheduler {
     return String(email || "").trim().toLowerCase();
   }
 
-  mergePlaceholders(content, lead) {
+  // ✅ FIX: signature parameter add kiya — account.signature yahan aayegi
+  mergePlaceholders(content, lead, signature = "") {
     let out = content;
 
     const name = lead.name || "";
@@ -77,7 +62,16 @@ class EmailScheduler {
         : lead.payload
       : {};
 
-    const allFields = { name, email, Name: name, Email: email, ...payload };
+    // ✅ Signature: newlines ko <br> mein convert karo (HTML email ke liye)
+    const sigHtml = signature ? String(signature).replace(/\n/g, "<br>") : "";
+
+    const allFields = {
+      name, email,
+      Name: name, Email: email,
+      Signature: sigHtml,   // ✅ {Signature} replace hoga
+      signature: sigHtml,   // ✅ {signature} bhi (case-insensitive backup)
+      ...payload,
+    };
 
     for (const [key, value] of Object.entries(allFields)) {
       const safe = String(value || "");
@@ -139,7 +133,8 @@ class EmailScheduler {
          smtp_host,
          smtp_port,
          smtp_security,
-         daily_limit
+         daily_limit,
+         signature         -- ✅ signature bhi fetch karo
        FROM user_email_accounts
        WHERE user_id = ?`,
       [userId]
@@ -233,7 +228,6 @@ class EmailScheduler {
     return distribution;
   }
 
-  // ✅ campaign_data se live unsubscribed count
   async getUnsubscribedCount(conn, campaignId) {
     const [result] = await conn.query(
       `SELECT COUNT(*) as cnt
@@ -252,15 +246,6 @@ class EmailScheduler {
 
     console.log(`⚙️ Settings: max_level=${maxLevel}, delay_ms=${delayMs}ms`);
 
-    /**
-     * ✅ STEP 1: Pending leads ko unsubscribed mark karo
-     *
-     * scope='all'      → sirf user_id match kaafi hai (campaign_id koi bhi ho)
-     * scope='campaign' → user_id + campaign_id dono match karna chahiye
-     *
-     * ONLY status='pending' rows update hote hain
-     * Already 'sent' / 'unsubscribed' rows safe hain
-     */
     const [unsubMarkResult] = await conn.query(
       `UPDATE campaign_data cd
        JOIN unsubscribes u
@@ -310,11 +295,6 @@ class EmailScheduler {
         batchNumber++;
         console.log(`\n🔄 === BATCH ${batchNumber} ===`);
 
-        /**
-         * ✅ STEP 2: Sirf 'pending' leads pull karo
-         * unsubscribed leads yahan aayenge hi nahi (STEP 1 ne mark kar diya)
-         * id SELECT karo — update row-safe hoga
-         */
         const [leads] = await conn.query(
           `SELECT cd.id, cd.email, cd.name, cd.payload
            FROM campaign_data cd
@@ -371,7 +351,12 @@ class EmailScheduler {
           const transporter = createTransporter(account);
 
           try {
-            let emailContent = this.mergePlaceholders(templateContent, lead);
+            // ✅ FIX: account.signature pass karo — {Signature} replace hoga
+            let emailContent = this.mergePlaceholders(
+              templateContent,
+              lead,
+              account.signature || ""   // ← yahan signature inject ho rahi hai
+            );
 
             const trackingPixel = `<img src="${appUrl}/api/track/open?cid=${campaign.id}&email=${encodeURIComponent(
               lead.email
@@ -406,11 +391,6 @@ class EmailScheduler {
               },
             });
 
-            /**
-             * ✅ CRITICAL:
-             * id use karo (email nahi) — row-safe
-             * AND status = 'pending' guard — unsubscribed rows KABHI overwrite nahi honge
-             */
             await conn.query(
               `UPDATE campaign_data
                SET status = 'sent', sent_at = NOW(), sent_from_email = ?
@@ -440,7 +420,6 @@ class EmailScheduler {
 
         console.log(`\n🎉 Batch ${batchNumber} Complete → Sent: ${batchSent}, Failed: ${batchFailed}`);
 
-        // ✅ Har batch ke baad unsubscribed_count update karo
         const batchUnsubCount = await this.getUnsubscribedCount(conn, campaign.id);
 
         await conn.query(
@@ -474,7 +453,6 @@ class EmailScheduler {
         }
       }
 
-      // ✅ Final completion — unsubscribed_count bhi save karo
       const finalUnsubCount = await this.getUnsubscribedCount(conn, campaign.id);
 
       await conn.query(
