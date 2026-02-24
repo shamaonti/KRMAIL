@@ -416,8 +416,9 @@ const CampaignPage = () => {
 
   return (
     <>
-      <header className="bg-card shadow-sm border-b">
-        <div className="px-6 py-4 flex items-center justify-between">
+      {/* ✅ ONLY CHANGE: header height fixed + centered (no py-4) */}
+      <header className="bg-card shadow-sm border-b sticky top-0 z-50 h-16 flex items-center">
+        <div className="px-6 w-full flex items-center justify-between">
           <h2 className="text-2xl font-semibold text-foreground">Campaign Management</h2>
           <div className="flex gap-3">
             <Button variant="outline" onClick={handlePreview} disabled={!selectedTemplate}>
@@ -505,11 +506,8 @@ const CampaignPage = () => {
                   leads.map((l, i) => (
                     <TableRow key={`${extractLeadEmail(l)}-${i}`}>
                       <TableCell className="text-muted-foreground text-sm">{i + 1}</TableCell>
-                      {/* ✅ FIX: extractLeadEmail — handles "Email", "email", "EMAIL" */}
                       <TableCell className="font-mono text-sm">{extractLeadEmail(l)}</TableCell>
-                      {/* ✅ FIX: extractLeadName — handles "Name", "name", "firstName+lastName" */}
                       <TableCell>{extractLeadName(l)}</TableCell>
-                      {/* ✅ FIX: extractLeadCompany — handles "Company", "company" */}
                       <TableCell>{extractLeadCompany(l)}</TableCell>
                     </TableRow>
                   ))
@@ -521,7 +519,7 @@ const CampaignPage = () => {
       </dialog>
 
       {/* ── Main ──────────────────────────────────────────────────────────────── */}
-      <main className="p-6">
+      <main className="p-6 h-[calc(100vh-72px)] overflow-y-auto">
         {errors.length > 0 && (
           <Alert variant="destructive" className="mb-6">
             <AlertCircle className="h-4 w-4" />
@@ -757,8 +755,8 @@ const CampaignPage = () => {
 
         {/* ── Campaign Table ────────────────────────────────────────────────────── */}
         <div className="mt-6">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
+          <Card className="overflow-hidden">
+            <CardHeader className="flex flex-row items-center justify-between sticky top-0 z-40 bg-card">
               <CardTitle>Database Campaigns</CardTitle>
               <div className="flex gap-2">
                 <Input
@@ -772,6 +770,7 @@ const CampaignPage = () => {
                 </Button>
               </div>
             </CardHeader>
+
             <CardContent>
               {isLoadingCampaigns ? (
                 <div className="text-center py-10">
@@ -782,9 +781,9 @@ const CampaignPage = () => {
                 <div className="text-center py-10 text-muted-foreground">No campaigns in database</div>
               ) : (
                 <div className="space-y-4">
-                  <div className="overflow-x-auto">
+                  <div className="overflow-x-auto max-h-[60vh] overflow-y-auto">
                     <Table>
-                      <TableHeader>
+                      <TableHeader className="sticky top-0 z-30 bg-card">
                         <TableRow>
                           <TableHead>Campaign</TableHead>
                           <TableHead>Status</TableHead>
@@ -797,6 +796,7 @@ const CampaignPage = () => {
                           <TableHead className="w-32">Actions</TableHead>
                         </TableRow>
                       </TableHeader>
+
                       <TableBody>
                         {paginatedCampaigns.map(c => (
                           <TableRow key={c.id}>

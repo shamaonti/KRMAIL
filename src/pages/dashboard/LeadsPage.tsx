@@ -32,9 +32,11 @@ import {
 } from "lucide-react";
 
 /**
- * ✅ Only change: Removed mock data, wired to LIVE backend.
- * ✅ UI/design is unchanged.
- * ✅ Buttons are wired: fetch, export, export selected, import (bulk), add lead, add tag (selected), delete.
+ * ✅ Only change in this update:
+ * - Header is sticky (does not scroll)
+ * - Main page becomes the scroll container
+ * - Leads table body scrolls (table header stays visible)
+ * ✅ Everything else is kept the same (UI/design/logic unchanged)
  */
 
 type UiLead = {
@@ -67,8 +69,7 @@ type ApiLead = {
 
 const LeadsPage = () => {
   // ✅ set this to your backend URL (env first)
-const API_BASE =
-  import.meta.env.VITE_API_URL || "http://localhost:3001";
+  const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3001";
 
   const [selectedLeads, setSelectedLeads] = useState<number[]>([]);
   const [filterStatus, setFilterStatus] = useState("all");
@@ -546,9 +547,12 @@ const API_BASE =
   const visibleLeads = useMemo(() => {
     let data = leads;
 
-    if (filterStatus === "hot") data = data.filter((l) => normalizeStatus(l.status) === "Hot Lead");
-    if (filterStatus === "replied") data = data.filter((l) => normalizeStatus(l.status) === "Replied");
-    if (filterStatus === "cold") data = data.filter((l) => normalizeStatus(l.status) === "Cold Lead");
+    if (filterStatus === "hot")
+      data = data.filter((l) => normalizeStatus(l.status) === "Hot Lead");
+    if (filterStatus === "replied")
+      data = data.filter((l) => normalizeStatus(l.status) === "Replied");
+    if (filterStatus === "cold")
+      data = data.filter((l) => normalizeStatus(l.status) === "Cold Lead");
 
     if (filterEngagement !== "all") {
       const fe = filterEngagement.toLowerCase();
@@ -569,49 +573,57 @@ const API_BASE =
   }, [leads, filterStatus, filterEngagement, searchText]);
 
   return (
-    <>
-      <header className="bg-white shadow-sm border-b border-gray-200">
-        <div className="px-6 py-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-2xl font-nunito font-semibold" style={{ color: "#012970" }}>
-              Data Management
-            </h2>
-            <div className="flex gap-3">
-              <Button variant="outline" className="border-gray-300" onClick={handleExportCSV}>
-                <Download className="mr-2 h-4 w-4" />
-                Export CSV
-              </Button>
+    <div className="h-screen flex flex-col">
+      {/* ✅ Sticky header (does not scroll) */}
+      {/* ✅ ONLY CHANGE: make header a fixed single-line height like other pages */}
+      <header className="bg-white shadow-sm border-b border-gray-200 sticky top-0 z-50 h-16 flex items-center">
+        <div className="px-6 w-full flex items-center justify-between">
+          <h2
+            className="text-2xl font-nunito font-semibold"
+            style={{ color: "#012970" }}
+          >
+            Data Management
+          </h2>
+          <div className="flex gap-3">
+            <Button
+              variant="outline"
+              className="border-gray-300"
+              onClick={handleExportCSV}
+            >
+              <Download className="mr-2 h-4 w-4" />
+              Export CSV
+            </Button>
 
-              <Button
-                className="text-white font-medium"
-                style={{ backgroundColor: "#1e3a8a" }}
-                onClick={handleImportClick}
-              >
-                <Upload className="mr-2 h-4 w-4" />
-                Import Data
-              </Button>
+            <Button
+              className="text-white font-medium"
+              style={{ backgroundColor: "#1e3a8a" }}
+              onClick={handleImportClick}
+            >
+              <Upload className="mr-2 h-4 w-4" />
+              Import Data
+            </Button>
 
-              <Button
-                className="text-white font-medium"
-                style={{ backgroundColor: "#1e3a8a" }}
-                onClick={() => setIsAddOpen(true)}
-              >
-                Add Data
-              </Button>
+            <Button
+              className="text-white font-medium"
+              style={{ backgroundColor: "#1e3a8a" }}
+              onClick={() => setIsAddOpen(true)}
+            >
+              Add Data
+            </Button>
 
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".csv,text/csv"
-                className="hidden"
-                onChange={handleImportFile}
-              />
-            </div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".csv,text/csv"
+              className="hidden"
+              onChange={handleImportFile}
+            />
           </div>
         </div>
       </header>
 
-      <main className="p-6">
+      {/* ✅ Main scroll area (only this scrolls) */}
+      <main className="p-6 overflow-y-auto flex-1">
         {/* Stats Cards */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
           <Card className="border border-gray-200 shadow-sm">
@@ -636,7 +648,9 @@ const API_BASE =
                 <div>
                   <p className="text-sm text-gray-600">Hot Leads</p>
                   <p className="text-2xl font-bold text-red-600">
-                    {leads.filter((l) => normalizeStatus(l.status) === "Hot Lead").length.toLocaleString()}
+                    {leads
+                      .filter((l) => normalizeStatus(l.status) === "Hot Lead")
+                      .length.toLocaleString()}
                   </p>
                 </div>
                 <div className="bg-red-100 p-2 rounded-lg">
@@ -652,7 +666,9 @@ const API_BASE =
                 <div>
                   <p className="text-sm text-gray-600">Replied</p>
                   <p className="text-2xl font-bold text-green-600">
-                    {leads.filter((l) => normalizeStatus(l.status) === "Replied").length.toLocaleString()}
+                    {leads
+                      .filter((l) => normalizeStatus(l.status) === "Replied")
+                      .length.toLocaleString()}
                   </p>
                 </div>
                 <div className="bg-green-100 p-2 rounded-lg">
@@ -669,7 +685,8 @@ const API_BASE =
                   <p className="text-sm text-gray-600">Avg. Score</p>
                   <p className="text-2xl font-bold" style={{ color: "#012970" }}>
                     {Math.round(
-                      leads.reduce((s, l) => s + (Number(l.score) || 0), 0) / Math.max(leads.length, 1)
+                      leads.reduce((s, l) => s + (Number(l.score) || 0), 0) /
+                        Math.max(leads.length, 1)
                     )}
                   </p>
                 </div>
@@ -734,7 +751,9 @@ const API_BASE =
             {isMoreFiltersOpen && (
               <div className="mt-4 p-4 border border-gray-200 rounded-md bg-gray-50">
                 <div className="flex flex-col md:flex-row gap-3 md:items-center">
-                  <Label className="text-sm text-gray-600">Add tag to selected Data</Label>
+                  <Label className="text-sm text-gray-600">
+                    Add tag to selected Data
+                  </Label>
                   <Input
                     className="md:w-64"
                     placeholder="e.g. fintech"
@@ -766,7 +785,9 @@ const API_BASE =
 
             {selectedLeads.length > 0 && (
               <div className="mt-4 flex items-center space-x-2">
-                <span className="text-sm text-gray-600">{selectedLeads.length} data selected</span>
+                <span className="text-sm text-gray-600">
+                  {selectedLeads.length} data selected
+                </span>
                 <Button
                   size="sm"
                   variant="outline"
@@ -790,128 +811,141 @@ const API_BASE =
         </Card>
 
         {/* Leads Table */}
-        <Card className="border border-gray-200 shadow-sm">
+        <Card className="border border-gray-200 shadow-sm overflow-hidden">
           <CardContent className="p-0">
-            <Table>
-              <TableHeader>
-                <TableRow className="border-b border-gray-200">
-                  <TableHead className="w-12">
-                    <Checkbox
-                      checked={
-                        selectedLeads.length === visibleLeads.length && visibleLeads.length > 0
-                      }
-                      onCheckedChange={(checked) => {
-                        if (checked) setSelectedLeads(visibleLeads.map((lead) => lead.id));
-                        else setSelectedLeads([]);
-                      }}
-                    />
-                  </TableHead>
-                  <TableHead>Data Information</TableHead>
-                  <TableHead>Company</TableHead>
-                  <TableHead className="whitespace-nowrap">Added Date</TableHead>
-                  <TableHead>Campaigns</TableHead>
-                  <TableHead className="whitespace-nowrap">Last Campaign</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Score</TableHead>
-                  <TableHead>Engagement</TableHead>
-                  <TableHead>Tags</TableHead>
-                  <TableHead className="w-12"></TableHead>
-                </TableRow>
-              </TableHeader>
-
-              <TableBody>
-                {visibleLeads.map((lead) => (
-                  <TableRow key={lead.id} className="border-b border-gray-100 hover:bg-gray-50">
-                    <TableCell>
+            {/* ✅ Only table area scrolls, header stays visible */}
+            <div className="max-h-[60vh] overflow-y-auto">
+              <Table>
+                <TableHeader className="sticky top-0 z-30 bg-white">
+                  <TableRow className="border-b border-gray-200">
+                    <TableHead className="w-12">
                       <Checkbox
-                        checked={selectedLeads.includes(lead.id)}
+                        checked={
+                          selectedLeads.length === visibleLeads.length &&
+                          visibleLeads.length > 0
+                        }
                         onCheckedChange={(checked) => {
-                          if (checked) setSelectedLeads([...selectedLeads, lead.id]);
-                          else setSelectedLeads(selectedLeads.filter((id) => id !== lead.id));
+                          if (checked) setSelectedLeads(visibleLeads.map((lead) => lead.id));
+                          else setSelectedLeads([]);
                         }}
                       />
-                    </TableCell>
+                    </TableHead>
+                    <TableHead>Data Information</TableHead>
+                    <TableHead>Company</TableHead>
+                    <TableHead className="whitespace-nowrap">Added Date</TableHead>
+                    <TableHead>Campaigns</TableHead>
+                    <TableHead className="whitespace-nowrap">Last Campaign</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Score</TableHead>
+                    <TableHead>Engagement</TableHead>
+                    <TableHead>Tags</TableHead>
+                    <TableHead className="w-12"></TableHead>
+                  </TableRow>
+                </TableHeader>
 
-                    <TableCell>
-                      <div>
-                        <p className="font-medium">{lead.name}</p>
-                        <p className="text-sm text-gray-500">{lead.email}</p>
-                      </div>
-                    </TableCell>
+                <TableBody>
+                  {visibleLeads.map((lead) => (
+                    <TableRow key={lead.id} className="border-b border-gray-100 hover:bg-gray-50">
+                      <TableCell>
+                        <Checkbox
+                          checked={selectedLeads.includes(lead.id)}
+                          onCheckedChange={(checked) => {
+                            if (checked) setSelectedLeads([...selectedLeads, lead.id]);
+                            else setSelectedLeads(selectedLeads.filter((id) => id !== lead.id));
+                          }}
+                        />
+                      </TableCell>
 
-                    <TableCell className="text-gray-900">{lead.company}</TableCell>
-
-                    <TableCell className="text-gray-600 whitespace-nowrap">{lead.addedDate}</TableCell>
-
-                    <TableCell className="text-center">{lead.campaigns}</TableCell>
-
-                    <TableCell className="text-gray-600 whitespace-nowrap">{lead.lastCampaign}</TableCell>
-
-                    <TableCell>
-                      <span
-                        className={`px-2 py-1 rounded-full text-xs font-medium whitespace-nowrap ${getStatusColor(
-                          normalizeStatus(lead.status)
-                        )}`}
-                      >
-                        {normalizeStatus(lead.status)}
-                      </span>
-                    </TableCell>
-
-                    <TableCell>
-                      <div className="flex items-center space-x-2">
-                        <div className="w-12 bg-gray-200 rounded-full h-2">
-                          <div
-                            className="bg-blue-600 h-2 rounded-full"
-                            style={{ width: `${Math.max(0, Math.min(100, Number(lead.score) || 0))}%` }}
-                          ></div>
+                      <TableCell>
+                        <div>
+                          <p className="font-medium">{lead.name}</p>
+                          <p className="text-sm text-gray-500">{lead.email}</p>
                         </div>
-                        <span className="text-sm font-medium">{lead.score}</span>
-                      </div>
-                    </TableCell>
+                      </TableCell>
 
-                    <TableCell>
-                      <span className={`font-medium ${getEngagementColor(lead.engagement)}`}>
-                        {lead.engagement}
-                      </span>
-                    </TableCell>
+                      <TableCell className="text-gray-900">{lead.company}</TableCell>
 
-                    <TableCell>
-                      <div className="flex flex-nowrap gap-1 whitespace-nowrap overflow-hidden">
-                        {(lead.tags || []).map((tag, index) => (
-                          <span
-                            key={index}
-                            className="px-2 py-1 bg-gray-100 text-gray-700 text-xs rounded whitespace-nowrap"
-                          >
-                            {tag}
-                          </span>
-                        ))}
-                      </div>
-                    </TableCell>
+                      <TableCell className="text-gray-600 whitespace-nowrap">
+                        {lead.addedDate}
+                      </TableCell>
 
-                    <TableCell>
-                      {/* ✅ Row action wired: delete */}
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => deleteLead(lead.id, lead.email)}
-                        title="Delete lead"
-                      >
-                        <MoreHorizontal className="h-4 w-4" />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                      <TableCell className="text-center">{lead.campaigns}</TableCell>
 
-                {/* Empty state */}
-                {!visibleLeads.length && (
-                  <TableRow>
-                    <TableCell colSpan={11} className="py-10 text-center text-gray-500">
-                      {isLoading ? "Loading..." : "No leads found."}
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
+                      <TableCell className="text-gray-600 whitespace-nowrap">
+                        {lead.lastCampaign}
+                      </TableCell>
+
+                      <TableCell>
+                        <span
+                          className={`px-2 py-1 rounded-full text-xs font-medium whitespace-nowrap ${getStatusColor(
+                            normalizeStatus(lead.status)
+                          )}`}
+                        >
+                          {normalizeStatus(lead.status)}
+                        </span>
+                      </TableCell>
+
+                      <TableCell>
+                        <div className="flex items-center space-x-2">
+                          <div className="w-12 bg-gray-200 rounded-full h-2">
+                            <div
+                              className="bg-blue-600 h-2 rounded-full"
+                              style={{
+                                width: `${Math.max(
+                                  0,
+                                  Math.min(100, Number(lead.score) || 0)
+                                )}%`,
+                              }}
+                            ></div>
+                          </div>
+                          <span className="text-sm font-medium">{lead.score}</span>
+                        </div>
+                      </TableCell>
+
+                      <TableCell>
+                        <span className={`font-medium ${getEngagementColor(lead.engagement)}`}>
+                          {lead.engagement}
+                        </span>
+                      </TableCell>
+
+                      <TableCell>
+                        <div className="flex flex-nowrap gap-1 whitespace-nowrap overflow-hidden">
+                          {(lead.tags || []).map((tag, index) => (
+                            <span
+                              key={index}
+                              className="px-2 py-1 bg-gray-100 text-gray-700 text-xs rounded whitespace-nowrap"
+                            >
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+                      </TableCell>
+
+                      <TableCell>
+                        {/* ✅ Row action wired: delete */}
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => deleteLead(lead.id, lead.email)}
+                          title="Delete lead"
+                        >
+                          <MoreHorizontal className="h-4 w-4" />
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+
+                  {/* Empty state */}
+                  {!visibleLeads.length && (
+                    <TableRow>
+                      <TableCell colSpan={11} className="py-10 text-center text-gray-500">
+                        {isLoading ? "Loading..." : "No leads found."}
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </div>
           </CardContent>
         </Card>
 
@@ -1027,7 +1061,9 @@ const API_BASE =
                   <select
                     className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
                     value={newLead.engagement}
-                    onChange={(e) => setNewLead({ ...newLead, engagement: e.target.value })}
+                    onChange={(e) =>
+                      setNewLead({ ...newLead, engagement: e.target.value })
+                    }
                   >
                     <option>High</option>
                     <option>Medium</option>
@@ -1062,7 +1098,11 @@ const API_BASE =
                 >
                   Cancel
                 </Button>
-                <Button type="submit" className="text-white font-medium" style={{ backgroundColor: "#1e3a8a" }}>
+                <Button
+                  type="submit"
+                  className="text-white font-medium"
+                  style={{ backgroundColor: "#1e3a8a" }}
+                >
                   Save Data
                 </Button>
               </div>
@@ -1070,7 +1110,7 @@ const API_BASE =
           </div>
         </div>
       )}
-    </>
+    </div>
   );
 };
 

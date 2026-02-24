@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { Eye, EyeOff, TestTube } from "lucide-react";
+
 const API_BASE =
   (import.meta.env.VITE_API_URL || "http://localhost:3001") +
   "/api/emailcamp";
@@ -105,7 +106,7 @@ const InboxAdditionPage = () => {
         }
       );
       const result = await res.json();
-      
+
       if (!result.success || !result.data || result.data.length === 0) {
         console.log("No saved data found.");
         return;
@@ -205,7 +206,7 @@ const InboxAdditionPage = () => {
 
       alert("✅ All configurations saved successfully!");
       await loadSavedData();
-      
+
     } catch (err) {
       console.error(err);
       alert("❌ Error while saving.");
@@ -214,7 +215,8 @@ const InboxAdditionPage = () => {
 
   return (
     <>
-      <header className="bg-white shadow-sm border-b border-gray-200">
+      {/* ✅ ONLY CHANGE #1: sticky header */}
+      <header className="bg-white shadow-sm border-b border-gray-200 sticky top-0 z-50">
         <div className="px-4 py-3 flex justify-between items-center">
           <h2 className="text-lg font-semibold" style={{ color: '#012970' }}>Add Email Account</h2>
           <div className="flex space-x-2">
@@ -225,7 +227,8 @@ const InboxAdditionPage = () => {
         </div>
       </header>
 
-      <main className="p-3 md:p-6 bg-gray-100 min-h-screen">
+      {/* ✅ ONLY CHANGE #2: main scrolls */}
+      <main className="p-3 md:p-6 bg-gray-100 h-[calc(100vh-64px)] overflow-y-auto">
         <Card className="w-full shadow-lg border bg-white">
           <CardContent className="p-4 space-y-6">
 
@@ -233,9 +236,9 @@ const InboxAdditionPage = () => {
             <div>
               <div className="flex justify-between items-center mb-4">
                 <h3 className="text-base font-bold">Email Accounts</h3>
-                <Button 
-                  size="sm" 
-                  style={{ backgroundColor: '#1e3a8a', color: 'white' }} 
+                <Button
+                  size="sm"
+                  style={{ backgroundColor: '#1e3a8a', color: 'white' }}
                   onClick={addEmailConfig}
                 >
                   + Add Email Account
@@ -268,43 +271,43 @@ const InboxAdditionPage = () => {
                     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
                       <div>
                         <Label className="text-sm">From Name</Label>
-                        <Input 
-                          placeholder="Sender name" 
-                          value={config.fromName} 
-                          onChange={e => handleConfigChange(config.id, 'fromName', e.target.value)} 
+                        <Input
+                          placeholder="Sender name"
+                          value={config.fromName}
+                          onChange={e => handleConfigChange(config.id, 'fromName', e.target.value)}
                         />
                       </div>
                       <div>
                         <Label className="text-sm">From Email*</Label>
-                        <Input 
-                          placeholder="example@email.com" 
-                          type="email" 
-                          value={config.fromEmail} 
-                          onChange={e => handleConfigChange(config.id, 'fromEmail', e.target.value)} 
+                        <Input
+                          placeholder="example@email.com"
+                          type="email"
+                          value={config.fromEmail}
+                          onChange={e => handleConfigChange(config.id, 'fromEmail', e.target.value)}
                         />
                       </div>
                       <div>
                         <Label className="text-sm">SMTP Username</Label>
-                        <Input 
-                          placeholder="SMTP username" 
-                          value={config.smtpUsername} 
-                          onChange={e => handleConfigChange(config.id, 'smtpUsername', e.target.value)} 
+                        <Input
+                          placeholder="SMTP username"
+                          value={config.smtpUsername}
+                          onChange={e => handleConfigChange(config.id, 'smtpUsername', e.target.value)}
                         />
                       </div>
                       <div>
                         <Label className="text-sm">SMTP Password</Label>
                         <div className="relative">
-                          <Input 
-                            placeholder="SMTP password" 
-                            type={showPassword[config.id] ? "text" : "password"} 
-                            value={config.smtpPassword} 
-                            onChange={e => handleConfigChange(config.id, 'smtpPassword', e.target.value)} 
+                          <Input
+                            placeholder="SMTP password"
+                            type={showPassword[config.id] ? "text" : "password"}
+                            value={config.smtpPassword}
+                            onChange={e => handleConfigChange(config.id, 'smtpPassword', e.target.value)}
                           />
-                          <Button 
-                            type="button" 
-                            variant="ghost" 
-                            size="sm" 
-                            className="absolute right-1 top-1" 
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="absolute right-1 top-1"
                             onClick={() => togglePasswordVisibility(config.id)}
                           >
                             {showPassword[config.id] ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -313,24 +316,24 @@ const InboxAdditionPage = () => {
                       </div>
                       <div>
                         <Label className="text-sm">SMTP Host</Label>
-                        <Input 
-                          placeholder="smtp.gmail.com" 
-                          value={config.smtpHost} 
-                          onChange={e => handleConfigChange(config.id, 'smtpHost', e.target.value)} 
+                        <Input
+                          placeholder="smtp.gmail.com"
+                          value={config.smtpHost}
+                          onChange={e => handleConfigChange(config.id, 'smtpHost', e.target.value)}
                         />
                       </div>
                       <div>
                         <Label className="text-sm">SMTP Port</Label>
-                        <Input 
-                          placeholder="587" 
-                          value={config.smtpPort} 
-                          onChange={e => handleConfigChange(config.id, 'smtpPort', e.target.value)} 
+                        <Input
+                          placeholder="587"
+                          value={config.smtpPort}
+                          onChange={e => handleConfigChange(config.id, 'smtpPort', e.target.value)}
                         />
                       </div>
                       <div>
                         <Label className="text-sm">Security</Label>
-                        <Select 
-                          value={config.smtpSecurity} 
+                        <Select
+                          value={config.smtpSecurity}
                           onValueChange={val => handleConfigChange(config.id, 'smtpSecurity', val)}
                         >
                           <SelectTrigger><SelectValue /></SelectTrigger>
@@ -343,10 +346,10 @@ const InboxAdditionPage = () => {
                       </div>
                       <div>
                         <Label className="text-sm">Reply To</Label>
-                        <Input 
-                          placeholder="reply@email.com" 
-                          value={config.replyTo} 
-                          onChange={e => handleConfigChange(config.id, 'replyTo', e.target.value)} 
+                        <Input
+                          placeholder="reply@email.com"
+                          value={config.replyTo}
+                          onChange={e => handleConfigChange(config.id, 'replyTo', e.target.value)}
                         />
                       </div>
                     </div>
@@ -357,11 +360,11 @@ const InboxAdditionPage = () => {
                     <h4 className="text-sm font-semibold text-gray-700 mb-3 border-b pb-2">
                       📥 IMAP Settings (Receiving)
                     </h4>
-                    
+
                     <div className="flex items-center gap-2 mb-3 bg-blue-50 p-2 rounded">
-                      <Switch 
-                        checked={formData.useDifferentImap} 
-                        onCheckedChange={v => handleInputChange('useDifferentImap', v)} 
+                      <Switch
+                        checked={formData.useDifferentImap}
+                        onCheckedChange={v => handleInputChange('useDifferentImap', v)}
                       />
                       <Label className="text-sm font-semibold">Use different account for receiving emails</Label>
                     </div>
@@ -369,41 +372,41 @@ const InboxAdditionPage = () => {
                     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
                       <div>
                         <Label className="text-sm">IMAP Username</Label>
-                        <Input 
-                          placeholder="IMAP username" 
-                          value={config.imapUsername} 
-                          onChange={e => handleConfigChange(config.id, 'imapUsername', e.target.value)} 
+                        <Input
+                          placeholder="IMAP username"
+                          value={config.imapUsername}
+                          onChange={e => handleConfigChange(config.id, 'imapUsername', e.target.value)}
                         />
                       </div>
                       <div>
                         <Label className="text-sm">IMAP Password</Label>
-                        <Input 
-                          placeholder="IMAP password" 
-                          type="password" 
-                          value={config.imapPassword} 
-                          onChange={e => handleConfigChange(config.id, 'imapPassword', e.target.value)} 
+                        <Input
+                          placeholder="IMAP password"
+                          type="password"
+                          value={config.imapPassword}
+                          onChange={e => handleConfigChange(config.id, 'imapPassword', e.target.value)}
                         />
                       </div>
                       <div>
                         <Label className="text-sm">IMAP Host</Label>
-                        <Input 
-                          placeholder="imap.gmail.com" 
-                          value={config.imapHost} 
-                          onChange={e => handleConfigChange(config.id, 'imapHost', e.target.value)} 
+                        <Input
+                          placeholder="imap.gmail.com"
+                          value={config.imapHost}
+                          onChange={e => handleConfigChange(config.id, 'imapHost', e.target.value)}
                         />
                       </div>
                       <div>
                         <Label className="text-sm">IMAP Port</Label>
-                        <Input 
-                          placeholder="993" 
-                          value={config.imapPort} 
-                          onChange={e => handleConfigChange(config.id, 'imapPort', e.target.value)} 
+                        <Input
+                          placeholder="993"
+                          value={config.imapPort}
+                          onChange={e => handleConfigChange(config.id, 'imapPort', e.target.value)}
                         />
                       </div>
                       <div>
                         <Label className="text-sm">IMAP Security</Label>
-                        <Select 
-                          value={config.imapSecurity} 
+                        <Select
+                          value={config.imapSecurity}
                           onValueChange={val => handleConfigChange(config.id, 'imapSecurity', val)}
                         >
                           <SelectTrigger><SelectValue /></SelectTrigger>
@@ -443,11 +446,11 @@ const InboxAdditionPage = () => {
                     <span>Messages Per Day</span>
                     <span className="font-semibold text-blue-600">{messagesPerDay[0]}</span>
                   </Label>
-                  <Slider 
-                    value={messagesPerDay} 
-                    onValueChange={setMessagesPerDay} 
-                    max={20000} 
-                    min={1} 
+                  <Slider
+                    value={messagesPerDay}
+                    onValueChange={setMessagesPerDay}
+                    max={20000}
+                    min={1}
                   />
                 </div>
                 <div>
@@ -455,11 +458,11 @@ const InboxAdditionPage = () => {
                     <span>Time Between Emails (mins)</span>
                     <span className="font-semibold text-blue-600">{timeBetweenEmails[0]}</span>
                   </Label>
-                  <Slider 
-                    value={timeBetweenEmails} 
-                    onValueChange={setTimeBetweenEmails} 
-                    max={60} 
-                    min={3} 
+                  <Slider
+                    value={timeBetweenEmails}
+                    onValueChange={setTimeBetweenEmails}
+                    max={60}
+                    min={3}
                   />
                 </div>
               </div>
@@ -467,9 +470,9 @@ const InboxAdditionPage = () => {
 
             <div className="flex justify-end gap-3 pt-4 border-t">
               <Button variant="outline">Cancel</Button>
-              <Button 
-                style={{ backgroundColor: '#1e3a8a' }} 
-                className="text-white px-6" 
+              <Button
+                style={{ backgroundColor: '#1e3a8a' }}
+                className="text-white px-6"
                 onClick={handleSave}
               >
                 💾 Save All Accounts
