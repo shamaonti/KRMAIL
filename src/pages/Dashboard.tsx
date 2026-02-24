@@ -197,8 +197,6 @@ const DashboardHome = () => {
 
   useEffect(() => {
     fetchOverview();
-    const id = setInterval(fetchOverview, 15000);
-    return () => clearInterval(id);
   }, []);
 
   const recentCampaigns = useMemo(
