@@ -1,3 +1,4 @@
+const nodemailer = require('nodemailer');
 const express = require('express');
 const router = express.Router();
 const pool = require('../db');
@@ -217,6 +218,53 @@ router.get('/details/:userId', async (req, res) => {
     return res.status(500).json({
       success: false,
       message: err.message
+    });
+  }
+});
+
+// ============================================
+// REAL TEST CONNECTION ROUTE
+// ============================================
+router.post('/test', async (req, res) => {
+  const {
+    smtpHost,
+    smtpPort,
+    smtpUsername,
+    smtpPassword,
+    smtpSecurity
+  } = req.body;
+
+  if (!smtpHost || !smtpPort || !smtpUsername || !smtpPassword) {
+    return res.status(400).json({
+      success: false,
+      message: "SMTP details are required"
+    });
+  }
+
+  try {
+    const transporter = nodemailer.createTransport({
+      host: smtpHost,
+      port: parseInt(smtpPort),
+      secure: smtpSecurity === "ssl", // true only for 465
+      auth: {
+        user: smtpUsername,
+        pass: smtpPassword
+      }
+    });
+
+    await transporter.verify(); // 🔥 real connection check
+
+    return res.json({
+      success: true,
+      message: "Test Connection Successful"
+    });
+
+  } catch (error) {
+    console.error("SMTP ERROR:", error.message);
+
+    return res.status(500).json({
+      success: false,
+      message: "Invalid SMTP credentials or connection failed"
     });
   }
 });
