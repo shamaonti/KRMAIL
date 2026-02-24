@@ -37,7 +37,7 @@ import { useNavigate } from "react-router-dom";
 const SIG_MARKER = "<!-- __signature__ -->";
 const SIG_HTML = `\n${SIG_MARKER}<div style="margin-top:24px;padding-top:16px;border-top:1px solid #e5e7eb;font-size:13px;color:#6b7280;line-height:1.6;">{Signature}</div>`;
 const hasSig = (c: string) => c.includes(SIG_MARKER);
-const addSig = (c: string) => hasSig(c) ? c : c + SIG_HTML;
+const addSig = (c: string) => (hasSig(c) ? c : c + SIG_HTML);
 const removeSig = (c: string) => {
   const i = c.indexOf(SIG_MARKER);
   return i === -1 ? c : c.substring(0, i).trimEnd();
@@ -81,21 +81,29 @@ const API_BASE =
 
 function categoryToTemplateType(cat: EmailTemplateUI["category"]): TemplateType {
   switch (cat) {
-    case "welcome":   return "transactional";
-    case "follow-up": return "followup";
-    case "nurture":   return "newsletter";
+    case "welcome":
+      return "transactional";
+    case "follow-up":
+      return "followup";
+    case "nurture":
+      return "newsletter";
     case "closing":
-    default:          return "marketing";
+    default:
+      return "marketing";
   }
 }
 
 function templateTypeToCategory(t: TemplateType): EmailTemplateUI["category"] {
   switch (t) {
-    case "transactional": return "welcome";
-    case "followup":      return "follow-up";
-    case "newsletter":    return "nurture";
+    case "transactional":
+      return "welcome";
+    case "followup":
+      return "follow-up";
+    case "newsletter":
+      return "nurture";
     case "marketing":
-    default:              return "closing";
+    default:
+      return "closing";
   }
 }
 
@@ -115,8 +123,12 @@ async function apiFetchTemplates(userId: number): Promise<DbEmailTemplate[]> {
 }
 
 async function apiCreateTemplate(payload: {
-  user_id: number; name: string; subject: string; content: string;
-  template_type: TemplateType; is_default?: 0 | 1;
+  user_id: number;
+  name: string;
+  subject: string;
+  content: string;
+  template_type: TemplateType;
+  is_default?: 0 | 1;
 }): Promise<DbEmailTemplate> {
   const res = await fetch(API_BASE, {
     method: "POST",
@@ -124,49 +136,68 @@ async function apiCreateTemplate(payload: {
     body: JSON.stringify(payload),
   });
   const json = await res.json();
-  if (!json.success) throw new Error(json.message || "Failed to create template");
+  if (!json.success)
+    throw new Error(json.message || "Failed to create template");
   return json.data as DbEmailTemplate;
 }
 
-async function apiUpdateTemplate(id: number, payload: {
-  user_id: number; name: string; subject: string; content: string;
-  template_type: TemplateType; is_default?: 0 | 1;
-}): Promise<DbEmailTemplate> {
+async function apiUpdateTemplate(
+  id: number,
+  payload: {
+    user_id: number;
+    name: string;
+    subject: string;
+    content: string;
+    template_type: TemplateType;
+    is_default?: 0 | 1;
+  }
+): Promise<DbEmailTemplate> {
   const res = await fetch(`${API_BASE}/${id}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
   const json = await res.json();
-  if (!json.success) throw new Error(json.message || "Failed to update template");
+  if (!json.success)
+    throw new Error(json.message || "Failed to update template");
   return json.data as DbEmailTemplate;
 }
 
 async function apiDeleteTemplate(id: number, userId: number): Promise<void> {
-  const res = await fetch(`${API_BASE}/${id}?userId=${userId}`, { method: "DELETE" });
+  const res = await fetch(`${API_BASE}/${id}?userId=${userId}`, {
+    method: "DELETE",
+  });
   const json = await res.json();
-  if (!json.success) throw new Error(json.message || "Failed to delete template");
+  if (!json.success)
+    throw new Error(json.message || "Failed to delete template");
 }
 
-async function apiDuplicateTemplate(id: number, user_id: number): Promise<DbEmailTemplate> {
+async function apiDuplicateTemplate(
+  id: number,
+  user_id: number
+): Promise<DbEmailTemplate> {
   const res = await fetch(`${API_BASE}/${id}/duplicate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ user_id }),
   });
   const json = await res.json();
-  if (!json.success) throw new Error(json.message || "Failed to duplicate template");
+  if (!json.success)
+    throw new Error(json.message || "Failed to duplicate template");
   return json.data as DbEmailTemplate;
 }
 
 const EmailTemplatesPage = () => {
   const [templates, setTemplates] = useState<EmailTemplateUI[]>([]);
-  const [selectedTemplate, setSelectedTemplate] = useState<EmailTemplateUI | null>(null);
-  const [previewMode, setPreviewMode] = useState<"desktop" | "mobile">("desktop");
+  const [selectedTemplate, setSelectedTemplate] =
+    useState<EmailTemplateUI | null>(null);
+  const [previewMode, setPreviewMode] = useState<"desktop" | "mobile">(
+    "desktop"
+  );
   const [editMode, setEditMode] = useState(false);
   const [activeTab, setActiveTab] = useState<"templates" | "new">("templates");
   const [formData, setFormData] = useState<EmailTemplateUI | null>(null);
-  const [sigEnabled, setSigEnabled] = useState(false); // ── CHANGE 2a: state add karo
+  const [sigEnabled, setSigEnabled] = useState(false);
   const { toast } = useToast();
 
   const userId = useMemo(() => {
@@ -213,7 +244,11 @@ const EmailTemplatesPage = () => {
 
   useEffect(() => {
     loadTemplates().catch((e: any) => {
-      toast({ title: "Load Failed", description: e.message || "Failed to load templates", variant: "destructive" });
+      toast({
+        title: "Load Failed",
+        description: e.message || "Failed to load templates",
+        variant: "destructive",
+      });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
@@ -228,13 +263,13 @@ const EmailTemplatesPage = () => {
   useEffect(() => {
     if (editMode) {
       setFormData({ ...blankTemplate });
-      setSigEnabled(false); // ── CHANGE 2b: reset on new
+      setSigEnabled(false);
       setActiveTab("new");
       return;
     }
     if (selectedTemplate) {
       setFormData({ ...blankTemplate, ...selectedTemplate });
-      setSigEnabled(hasSig(selectedTemplate.content || "")); // ── CHANGE 2c: detect on load
+      setSigEnabled(hasSig(selectedTemplate.content || ""));
       setActiveTab("new");
       return;
     }
@@ -246,18 +281,24 @@ const EmailTemplatesPage = () => {
     setFormData((prev) => (prev ? { ...prev, [field]: value } : prev));
   };
 
-  // ── CHANGE 2d: toggle handler
   const handleSigToggle = (checked: boolean) => {
     setSigEnabled(checked);
     setFormData((prev) => {
       if (!prev) return prev;
-      return { ...prev, content: checked ? addSig(prev.content) : removeSig(prev.content) };
+      return {
+        ...prev,
+        content: checked ? addSig(prev.content) : removeSig(prev.content),
+      };
     });
   };
 
   const handleSaveTemplate = async () => {
     if (!formData || !formData.name || !formData.subject || !formData.content) {
-      toast({ title: "Validation Error", description: "Please fill in all required fields", variant: "destructive" });
+      toast({
+        title: "Validation Error",
+        description: "Please fill in all required fields",
+        variant: "destructive",
+      });
       return;
     }
 
@@ -266,7 +307,7 @@ const EmailTemplatesPage = () => {
         user_id: userId,
         name: formData.name.trim(),
         subject: formData.subject.trim(),
-        content: formData.content, // signature HTML saat save hoga
+        content: formData.content,
         template_type: categoryToTemplateType(formData.category),
         is_default: (formData.is_default ?? 0) as 0 | 1,
       };
@@ -284,7 +325,11 @@ const EmailTemplatesPage = () => {
       setEditMode(false);
       setSelectedTemplate(null);
     } catch (error: any) {
-      toast({ title: "Save Failed", description: error.message || "Failed to save template", variant: "destructive" });
+      toast({
+        title: "Save Failed",
+        description: error.message || "Failed to save template",
+        variant: "destructive",
+      });
     }
   };
 
@@ -294,7 +339,11 @@ const EmailTemplatesPage = () => {
       await loadTemplates();
       toast({ title: "Template Deleted", description: "Deleted successfully" });
     } catch (error: any) {
-      toast({ title: "Delete Failed", description: error.message || "Failed to delete template", variant: "destructive" });
+      toast({
+        title: "Delete Failed",
+        description: error.message || "Failed to delete template",
+        variant: "destructive",
+      });
     }
   };
 
@@ -302,52 +351,67 @@ const EmailTemplatesPage = () => {
     try {
       await apiDuplicateTemplate(templateId, userId);
       await loadTemplates();
-      toast({ title: "Template Duplicated", description: "Duplicated successfully" });
+      toast({
+        title: "Template Duplicated",
+        description: "Duplicated successfully",
+      });
     } catch (error: any) {
-      toast({ title: "Duplicate Failed", description: error.message || "Failed to duplicate template", variant: "destructive" });
+      toast({
+        title: "Duplicate Failed",
+        description: error.message || "Failed to duplicate template",
+        variant: "destructive",
+      });
     }
   };
 
-  // ── CHANGE 3: {Signature} variable add karo
   const availableVariables = [
-    { name: "Name",      description: "Recipient's first name" },
-    { name: "Company",   description: "Recipient's company" },
-    { name: "Email",     description: "Recipient's email address" },
-    { name: "Date",      description: "Current date" },
-    { name: "Industry",  description: "Company industry" },
-    { name: "JobTitle",  description: "Recipient's job title" },
-    { name: "Signature", description: "Your email signature" }, // ✅ NEW
+    { name: "Name", description: "Recipient's first name" },
+    { name: "Company", description: "Recipient's company" },
+    { name: "Email", description: "Recipient's email address" },
+    { name: "Date", description: "Current date" },
+    { name: "Industry", description: "Company industry" },
+    { name: "JobTitle", description: "Recipient's job title" },
+    { name: "Signature", description: "Your email signature" },
   ];
 
   return (
-    <>
-      <header className="bg-white shadow-sm border-b border-gray-200">
-        <div className="px-6 py-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-2xl font-nunito font-semibold" style={{ color: "#012970" }}>
-              Email Templates
-            </h2>
-            <div className="flex gap-3">
-              <Button variant="outline" className="border-gray-300" type="button">
-                <Wand2 className="mr-2 h-4 w-4" />
-                AI Generate
-              </Button>
-              <Button
-                type="button"
-                className="text-white font-medium"
-                style={{ backgroundColor: "#1e3a8a" }}
-                onClick={() => { setSelectedTemplate(null); setEditMode(true); }}
-              >
-                <Plus className="mr-2 h-4 w-4" />
-                New Template
-              </Button>
-            </div>
+    <div className="h-screen flex flex-col">
+      {/* ✅ ONLY CHANGE HERE: header height + alignment */}
+      <header className="sticky top-0 z-30 bg-white shadow-sm border-b border-gray-200 h-16 flex items-center">
+        <div className="px-6 w-full flex items-center justify-between">
+          <h2
+            className="text-2xl font-nunito font-semibold"
+            style={{ color: "#012970" }}
+          >
+            Email Templates
+          </h2>
+          <div className="flex gap-3">
+            <Button variant="outline" className="border-gray-300" type="button">
+              <Wand2 className="mr-2 h-4 w-4" />
+              AI Generate
+            </Button>
+            <Button
+              type="button"
+              className="text-white font-medium"
+              style={{ backgroundColor: "#1e3a8a" }}
+              onClick={() => {
+                setSelectedTemplate(null);
+                setEditMode(true);
+              }}
+            >
+              <Plus className="mr-2 h-4 w-4" />
+              New Template
+            </Button>
           </div>
         </div>
       </header>
 
-      <main className="p-6">
-        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)} className="w-full">
+      <main className="flex-1 overflow-y-auto p-6">
+        <Tabs
+          value={activeTab}
+          onValueChange={(v) => setActiveTab(v as any)}
+          className="w-full"
+        >
           <TabsList className="grid w-full grid-cols-2">
             <TabsTrigger value="templates">Templates</TabsTrigger>
             <TabsTrigger value="new">New</TabsTrigger>
@@ -356,7 +420,9 @@ const EmailTemplatesPage = () => {
           <TabsContent value="templates" className="mt-4">
             <Card className="border border-gray-200 shadow-sm">
               <CardHeader>
-                <CardTitle className="font-nunito" style={{ color: "#012970" }}>Your Templates</CardTitle>
+                <CardTitle className="font-nunito" style={{ color: "#012970" }}>
+                  Your Templates
+                </CardTitle>
               </CardHeader>
               <CardContent className="p-0">
                 <div className="space-y-1">
@@ -364,46 +430,98 @@ const EmailTemplatesPage = () => {
                     <div
                       key={template.id}
                       className={`p-4 border-b border-gray-100 cursor-pointer hover:bg-gray-50 ${
-                        selectedTemplate?.id === template.id ? "bg-blue-50 border-blue-200" : ""
+                        selectedTemplate?.id === template.id
+                          ? "bg-blue-50 border-blue-200"
+                          : ""
                       }`}
-                      onClick={() => { setSelectedTemplate(template); setEditMode(false); }}
+                      onClick={() => {
+                        setSelectedTemplate(template);
+                        setEditMode(false);
+                      }}
                     >
                       <div className="flex items-start justify-between">
                         <div className="flex-1">
-                          <h3 className="font-medium text-gray-900">{template.name}</h3>
-                          <p className="text-sm text-gray-500 truncate mt-1">{template.subject}</p>
+                          <h3 className="font-medium text-gray-900">
+                            {template.name}
+                          </h3>
+                          <p className="text-sm text-gray-500 truncate mt-1">
+                            {template.subject}
+                          </p>
                           <div className="flex items-center mt-2 space-x-4">
-                            <span className="text-xs text-gray-500">Seq: {template.sequence}</span>
-                            <span className="px-2 py-1 bg-gray-100 text-gray-700 text-xs rounded">{template.category}</span>
+                            <span className="text-xs text-gray-500">
+                              Seq: {template.sequence}
+                            </span>
+                            <span className="px-2 py-1 bg-gray-100 text-gray-700 text-xs rounded">
+                              {template.category}
+                            </span>
                             {template.is_default ? (
-                              <span className="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded">Default</span>
+                              <span className="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded">
+                                Default
+                              </span>
                             ) : null}
                             {hasSig(template.content) && (
-                              <span className="px-2 py-1 bg-green-100 text-green-700 text-xs rounded">✍️ Sig</span>
+                              <span className="px-2 py-1 bg-green-100 text-green-700 text-xs rounded">
+                                ✍️ Sig
+                              </span>
                             )}
                           </div>
-                          <p className="text-xs text-gray-400 mt-2">Modified: {template.lastModified || "-"}</p>
+                          <p className="text-xs text-gray-400 mt-2">
+                            Modified: {template.lastModified || "-"}
+                          </p>
                         </div>
 
                         <div className="flex flex-col space-y-1">
-                          <Button type="button" size="sm" variant="ghost"
-                            onClick={(e) => { e.stopPropagation(); handleDuplicateTemplate(template.id!); }}
-                            title="Duplicate template"><Copy className="h-3 w-3" /></Button>
-                          <Button type="button" size="sm" variant="ghost"
-                            onClick={(e) => { e.stopPropagation(); setSelectedTemplate(template); setEditMode(false); }}
-                            title="Edit template"><Edit className="h-3 w-3" /></Button>
-                          <Button type="button" size="sm" variant="ghost" className="text-red-600 hover:text-red-700"
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
                             onClick={(e) => {
                               e.stopPropagation();
-                              if (confirm("Are you sure you want to delete this template?")) handleDeleteTemplate(template.id!);
+                              handleDuplicateTemplate(template.id!);
                             }}
-                            title="Delete template"><Trash2 className="h-3 w-3" /></Button>
+                            title="Duplicate template"
+                          >
+                            <Copy className="h-3 w-3" />
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedTemplate(template);
+                              setEditMode(false);
+                            }}
+                            title="Edit template"
+                          >
+                            <Edit className="h-3 w-3" />
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            className="text-red-600 hover:text-red-700"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (
+                                confirm(
+                                  "Are you sure you want to delete this template?"
+                                )
+                              )
+                                handleDeleteTemplate(template.id!);
+                            }}
+                            title="Delete template"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </Button>
                         </div>
                       </div>
                     </div>
                   ))}
                   {templates.length === 0 ? (
-                    <div className="p-10 text-center text-gray-500">No templates yet.</div>
+                    <div className="p-10 text-center text-gray-500">
+                      No templates yet.
+                    </div>
                   ) : null}
                 </div>
               </CardContent>
@@ -415,21 +533,48 @@ const EmailTemplatesPage = () => {
               <Card className="border border-gray-200 shadow-sm">
                 <CardHeader>
                   <div className="flex items-center justify-between">
-                    <h3 className="font-nunito font-semibold" style={{ color: "#012970" }}>
-                      {editMode ? "Create New Template" : `Editing: ${formData.name || ""}`}
+                    <h3
+                      className="font-nunito font-semibold"
+                      style={{ color: "#012970" }}
+                    >
+                      {editMode
+                        ? "Create New Template"
+                        : `Editing: ${formData.name || ""}`}
                     </h3>
                     <div className="flex items-center space-x-2">
                       <div className="flex border border-gray-300 rounded-lg">
-                        <Button type="button" size="sm"
+                        <Button
+                          type="button"
+                          size="sm"
                           variant={previewMode === "desktop" ? "default" : "ghost"}
-                          className={previewMode === "desktop" ? "bg-gray-900 text-white" : ""}
-                          onClick={() => setPreviewMode("desktop")}><Monitor className="h-4 w-4" /></Button>
-                        <Button type="button" size="sm"
+                          className={
+                            previewMode === "desktop"
+                              ? "bg-gray-900 text-white"
+                              : ""
+                          }
+                          onClick={() => setPreviewMode("desktop")}
+                        >
+                          <Monitor className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
                           variant={previewMode === "mobile" ? "default" : "ghost"}
-                          className={previewMode === "mobile" ? "bg-gray-900 text-white" : ""}
-                          onClick={() => setPreviewMode("mobile")}><Smartphone className="h-4 w-4" /></Button>
+                          className={
+                            previewMode === "mobile"
+                              ? "bg-gray-900 text-white"
+                              : ""
+                          }
+                          onClick={() => setPreviewMode("mobile")}
+                        >
+                          <Smartphone className="h-4 w-4" />
+                        </Button>
                       </div>
-                      <Button type="button" variant="outline" className="border-gray-300">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="border-gray-300"
+                      >
                         <Eye className="mr-2 h-4 w-4" />
                         Preview
                       </Button>
@@ -449,13 +594,26 @@ const EmailTemplatesPage = () => {
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div className="space-y-2">
                           <Label htmlFor="template-name">Template Name</Label>
-                          <Input id="template-name" placeholder="Enter template name"
-                            value={formData.name} onChange={(e) => handleFormChange("name", e.target.value)} />
+                          <Input
+                            id="template-name"
+                            placeholder="Enter template name"
+                            value={formData.name}
+                            onChange={(e) =>
+                              handleFormChange("name", e.target.value)
+                            }
+                          />
                         </div>
                         <div className="space-y-2">
                           <Label htmlFor="template-category">Category</Label>
-                          <Select value={formData.category} onValueChange={(value) => handleFormChange("category", value)}>
-                            <SelectTrigger><SelectValue placeholder="Select category" /></SelectTrigger>
+                          <Select
+                            value={formData.category}
+                            onValueChange={(value) =>
+                              handleFormChange("category", value)
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select category" />
+                            </SelectTrigger>
                             <SelectContent>
                               <SelectItem value="welcome">Welcome</SelectItem>
                               <SelectItem value="follow-up">Follow-up</SelectItem>
@@ -469,50 +627,92 @@ const EmailTemplatesPage = () => {
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <div className="md:col-span-2 space-y-2">
                           <Label htmlFor="subject-line">Subject Line</Label>
-                          <Input id="subject-line" placeholder="Enter email subject"
-                            value={formData.subject} onChange={(e) => handleFormChange("subject", e.target.value)} />
-                          <p className="text-xs text-gray-500">Character count: {formData.subject.length}/60 (optimal)</p>
+                          <Input
+                            id="subject-line"
+                            placeholder="Enter email subject"
+                            value={formData.subject}
+                            onChange={(e) =>
+                              handleFormChange("subject", e.target.value)
+                            }
+                          />
+                          <p className="text-xs text-gray-500">
+                            Character count: {formData.subject.length}/60 (optimal)
+                          </p>
                         </div>
                         <div className="space-y-2">
                           <Label htmlFor="sequence-number">Sequence #</Label>
-                          <Input id="sequence-number" type="number" placeholder="1"
+                          <Input
+                            id="sequence-number"
+                            type="number"
+                            placeholder="1"
                             value={formData.sequence}
-                            onChange={(e) => handleFormChange("sequence", Number(e.target.value || 1))} />
-                          <p className="text-xs text-gray-400">UI only (not saved in DB)</p>
+                            onChange={(e) =>
+                              handleFormChange(
+                                "sequence",
+                                Number(e.target.value || 1)
+                              )
+                            }
+                          />
+                          <p className="text-xs text-gray-400">
+                            UI only (not saved in DB)
+                          </p>
                         </div>
                       </div>
 
                       <div className="space-y-2">
                         <Label htmlFor="template-content-type">Content Type</Label>
-                        <Select value={formData.contentType} onValueChange={(value) => handleFormChange("contentType", value)}>
-                          <SelectTrigger><SelectValue placeholder="Select content type" /></SelectTrigger>
+                        <Select
+                          value={formData.contentType}
+                          onValueChange={(value) =>
+                            handleFormChange("contentType", value)
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select content type" />
+                          </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="text">Normal Text</SelectItem>
                             <SelectItem value="html">HTML</SelectItem>
                           </SelectContent>
                         </Select>
-                        <p className="text-xs text-gray-400">UI only (not saved in DB)</p>
+                        <p className="text-xs text-gray-400">
+                          UI only (not saved in DB)
+                        </p>
                       </div>
 
                       <div className="space-y-2">
-                        {/* ── CHANGE 3: Label + Checkbox ek hi row mein ── */}
                         <div className="flex items-center justify-between">
                           <Label htmlFor="email-content">Email Content</Label>
 
-                          {/* ✅ SIGNATURE CHECKBOX */}
                           <label className="flex items-center gap-2 cursor-pointer select-none group">
-                            <div className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-all ${
-                              sigEnabled ? "bg-blue-600 border-blue-600" : "bg-white border-gray-300 group-hover:border-blue-400"
-                            }`}
+                            <div
+                              className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-all ${
+                                sigEnabled
+                                  ? "bg-blue-600 border-blue-600"
+                                  : "bg-white border-gray-300 group-hover:border-blue-400"
+                              }`}
                               onClick={() => handleSigToggle(!sigEnabled)}
                             >
                               {sigEnabled && (
-                                <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                                <svg
+                                  className="w-3 h-3 text-white"
+                                  fill="none"
+                                  viewBox="0 0 24 24"
+                                  stroke="currentColor"
+                                  strokeWidth={3}
+                                >
+                                  <path
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    d="M5 13l4 4L19 7"
+                                  />
                                 </svg>
                               )}
                             </div>
-                            <span className="text-sm text-gray-600 font-medium" onClick={() => handleSigToggle(!sigEnabled)}>
+                            <span
+                              className="text-sm text-gray-600 font-medium"
+                              onClick={() => handleSigToggle(!sigEnabled)}
+                            >
                               ✍️ Add Signature in Footer
                             </span>
                           </label>
@@ -521,7 +721,9 @@ const EmailTemplatesPage = () => {
                         {formData.contentType === "html" ? (
                           <RichTextEditor
                             value={formData.content}
-                            onChange={(value) => handleFormChange("content", value)}
+                            onChange={(value) =>
+                              handleFormChange("content", value)
+                            }
                             placeholder="Write your HTML email content here..."
                             height="400px"
                           />
@@ -531,51 +733,86 @@ const EmailTemplatesPage = () => {
                             rows={12}
                             placeholder="Write your plain text email content here..."
                             value={formData.content}
-                            onChange={(e) => handleFormChange("content", e.target.value)}
+                            onChange={(e) =>
+                              handleFormChange("content", e.target.value)
+                            }
                           />
                         )}
 
-                        {/* ✅ Info strip when ON */}
                         {sigEnabled && (
                           <p className="text-xs text-blue-600 bg-blue-50 border border-blue-200 rounded px-3 py-2">
-                            ✍️ <strong>{"{Signature}"}</strong> footer HTML mein add ho gaya — save hote waqt DB mein bhi jayega.
+                            ✍️ <strong>{"{Signature}"}</strong> footer HTML mein add
+                            ho gaya — save hote waqt DB mein bhi jayega.
                           </p>
                         )}
                       </div>
 
                       <div className="flex justify-between">
                         <div className="space-x-2">
-                          <Button type="button" variant="outline" className="border-gray-300">
-                            <Wand2 className="mr-2 h-4 w-4" />AI Improve
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="border-gray-300"
+                          >
+                            <Wand2 className="mr-2 h-4 w-4" />
+                            AI Improve
                           </Button>
-                          <Button type="button" variant="outline" className="border-gray-300">Test A/B</Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="border-gray-300"
+                          >
+                            Test A/B
+                          </Button>
                         </div>
                         <div className="space-x-2">
-                          <Button type="button" variant="outline" className="border-gray-300"
-                            onClick={() => setActiveTab("templates")}>Cancel</Button>
-                          <Button type="button" className="text-white font-medium"
-                            style={{ backgroundColor: "#1e3a8a" }} onClick={handleSaveTemplate}>
-                            <Save className="mr-2 h-4 w-4" />Save Template
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="border-gray-300"
+                            onClick={() => setActiveTab("templates")}
+                          >
+                            Cancel
+                          </Button>
+                          <Button
+                            type="button"
+                            className="text-white font-medium"
+                            style={{ backgroundColor: "#1e3a8a" }}
+                            onClick={handleSaveTemplate}
+                          >
+                            <Save className="mr-2 h-4 w-4" />
+                            Save Template
                           </Button>
                         </div>
                       </div>
                     </TabsContent>
 
                     <TabsContent value="preview" className="mt-4">
-                      <div className={`mx-auto border border-gray-300 rounded-lg p-6 bg-white ${
-                        previewMode === "mobile" ? "max-w-sm" : "max-w-2xl"
-                      }`}>
+                      <div
+                        className={`mx-auto border border-gray-300 rounded-lg p-6 bg-white ${
+                          previewMode === "mobile" ? "max-w-sm" : "max-w-2xl"
+                        }`}
+                      >
                         <div className="border-b border-gray-200 pb-4 mb-4">
-                          <h4 className="font-medium">Subject: {formData.subject}</h4>
-                          <p className="text-sm text-gray-500">From: you@company.com</p>
-                          <p className="text-sm text-gray-500">To: john.doe@prospect.com</p>
+                          <h4 className="font-medium">
+                            Subject: {formData.subject}
+                          </h4>
+                          <p className="text-sm text-gray-500">
+                            From: you@company.com
+                          </p>
+                          <p className="text-sm text-gray-500">
+                            To: john.doe@prospect.com
+                          </p>
                         </div>
                         <div className="prose prose-sm max-w-none">
-                          <div dangerouslySetInnerHTML={{
-                            __html: formData.contentType === "html"
-                              ? formData.content
-                              : formData.content.replace(/\n/g, "<br/>"),
-                          }} />
+                          <div
+                            dangerouslySetInnerHTML={{
+                              __html:
+                                formData.contentType === "html"
+                                  ? formData.content
+                                  : formData.content.replace(/\n/g, "<br/>"),
+                            }}
+                          />
                         </div>
                       </div>
                     </TabsContent>
@@ -586,25 +823,33 @@ const EmailTemplatesPage = () => {
                           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                             <Card className="border border-gray-200">
                               <CardContent className="p-4 text-center">
-                                <div className="text-2xl font-bold text-blue-600">{formData.performance.opens}</div>
+                                <div className="text-2xl font-bold text-blue-600">
+                                  {formData.performance.opens}
+                                </div>
                                 <p className="text-sm text-gray-600">Open Rate</p>
                               </CardContent>
                             </Card>
                             <Card className="border border-gray-200">
                               <CardContent className="p-4 text-center">
-                                <div className="text-2xl font-bold text-green-600">{formData.performance.clicks}</div>
+                                <div className="text-2xl font-bold text-green-600">
+                                  {formData.performance.clicks}
+                                </div>
                                 <p className="text-sm text-gray-600">Click Rate</p>
                               </CardContent>
                             </Card>
                             <Card className="border border-gray-200">
                               <CardContent className="p-4 text-center">
-                                <div className="text-2xl font-bold text-purple-600">{formData.performance.replies}</div>
+                                <div className="text-2xl font-bold text-purple-600">
+                                  {formData.performance.replies}
+                                </div>
                                 <p className="text-sm text-gray-600">Reply Rate</p>
                               </CardContent>
                             </Card>
                           </div>
                           <div className="p-4 bg-blue-50 rounded-lg">
-                            <h4 className="font-medium text-blue-900 mb-2">Performance Insights</h4>
+                            <h4 className="font-medium text-blue-900 mb-2">
+                              Performance Insights
+                            </h4>
                             <ul className="text-sm text-blue-800 space-y-1">
                               <li>• Analytics is UI-only right now</li>
                               <li>• DB me performance store nahi ho raha</li>
@@ -613,7 +858,9 @@ const EmailTemplatesPage = () => {
                           </div>
                         </div>
                       ) : (
-                        <div className="text-sm text-gray-500 p-4">Save the template first to view analytics.</div>
+                        <div className="text-sm text-gray-500 p-4">
+                          Save the template first to view analytics.
+                        </div>
                       )}
                     </TabsContent>
                   </Tabs>
@@ -623,32 +870,44 @@ const EmailTemplatesPage = () => {
               <Card className="border border-gray-200 shadow-sm">
                 <CardContent className="p-12 text-center">
                   <FileText className="mx-auto h-12 w-12 text-gray-400" />
-                  <h3 className="mt-4 text-lg font-medium text-gray-900">No template selected</h3>
-                  <p className="mt-2 text-gray-500">Select a template from the list to edit, or create a new one.</p>
+                  <h3 className="mt-4 text-lg font-medium text-gray-900">
+                    No template selected
+                  </h3>
+                  <p className="mt-2 text-gray-500">
+                    Select a template from the list to edit, or create a new one.
+                  </p>
                 </CardContent>
               </Card>
             )}
           </TabsContent>
         </Tabs>
 
-        {/* Variables Helper */}
         <Card className="border border-gray-200 shadow-sm mt-6">
           <CardHeader>
-            <CardTitle className="font-nunito" style={{ color: "#012970" }}>Available Variables</CardTitle>
+            <CardTitle className="font-nunito" style={{ color: "#012970" }}>
+              Available Variables
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
               {availableVariables.map((variable, index) => (
-                <div key={index} className="p-3 border border-gray-200 rounded-lg text-center">
-                  <code className="bg-gray-100 px-2 py-1 rounded text-sm font-mono">{`{${variable.name}}`}</code>
-                  <p className="text-xs text-gray-500 mt-1">{variable.description}</p>
+                <div
+                  key={index}
+                  className="p-3 border border-gray-200 rounded-lg text-center"
+                >
+                  <code className="bg-gray-100 px-2 py-1 rounded text-sm font-mono">
+                    {`{${variable.name}}`}
+                  </code>
+                  <p className="text-xs text-gray-500 mt-1">
+                    {variable.description}
+                  </p>
                 </div>
               ))}
             </div>
           </CardContent>
         </Card>
       </main>
-    </>
+    </div>
   );
 };
 

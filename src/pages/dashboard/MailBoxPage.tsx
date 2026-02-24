@@ -107,9 +107,9 @@ const MailBoxPage = () => {
 
   return (
     <>
-      {/* HEADER */}
-      <header className="bg-white border-b">
-        <div className="p-4 flex justify-between">
+      {/* ✅ FIX: HEADER height fixed & centered (single line) */}
+      <header className="bg-white border-b h-16 flex items-center">
+        <div className="px-6 w-full flex items-center justify-between">
           <h2 className="text-xl font-semibold text-[#012970]">Mail Box</h2>
           <Button variant="outline" onClick={fetchInboxEmails}>
             <RefreshCw className="mr-2 h-4 w-4" />
@@ -163,9 +163,7 @@ const MailBoxPage = () => {
                       <div>
                         <p className="font-medium">{email.from_email}</p>
                         <p className="text-sm">{email.subject}</p>
-                        <p className="text-xs text-gray-500">
-                          {email.preview}
-                        </p>
+                        <p className="text-xs text-gray-500">{email.preview}</p>
                       </div>
                     </div>
                   </div>
@@ -192,9 +190,7 @@ const MailBoxPage = () => {
           {!selectedEmail ? (
             <CardContent className="p-10 text-center">
               <Mail className="mx-auto h-10 w-10 text-gray-400" />
-              <p className="mt-4 text-gray-500">
-                Select an email to read
-              </p>
+              <p className="mt-4 text-gray-500">Select an email to read</p>
             </CardContent>
           ) : (
             <>
@@ -208,9 +204,7 @@ const MailBoxPage = () => {
               </CardHeader>
 
               <CardContent>
-                <p className="mb-6 whitespace-pre-wrap">
-                  {selectedEmail.body}
-                </p>
+                <p className="mb-6 whitespace-pre-wrap">{selectedEmail.body}</p>
 
                 <Button onClick={() => setReplyMode(true)}>
                   <Reply className="mr-2 h-4 w-4" />
@@ -239,9 +233,7 @@ const MailBoxPage = () => {
                       >
                         Cancel
                       </Button>
-                      <Button onClick={sendReply}>
-                        Send Reply
-                      </Button>
+                      <Button onClick={sendReply}>Send Reply</Button>
                     </div>
                   </div>
                 )}
