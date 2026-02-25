@@ -30,7 +30,7 @@ class EmailScheduler {
     });
   }
 
-  pause() { this.isPaused = true; console.log("⏸️ Scheduler paused"); }
+  pause()  { this.isPaused = true;  console.log("⏸️ Scheduler paused");  }
   resume() { this.isPaused = false; console.log("▶️ Scheduler resumed"); }
 
   stop() {
@@ -50,32 +50,48 @@ class EmailScheduler {
     return String(email || "").trim().toLowerCase();
   }
 
-  // ✅ FIX: signature parameter add kiya — account.signature yahan aayegi
+  /**
+   * ✅ Merge ALL placeholders: {Name}, {Company}, {{name}}, {Signature} etc.
+   * Handles both single {key} and double {{key}} brace syntax, case-insensitive.
+   * Pulls all CSV columns from lead.payload JSON automatically.
+   */
   mergePlaceholders(content, lead, signature = "") {
     let out = content;
 
-    const name = lead.name || "";
-    const email = lead.email || "";
-    const payload = lead.payload
-      ? typeof lead.payload === "string"
-        ? JSON.parse(lead.payload)
-        : lead.payload
-      : {};
+    // ✅ Parse payload JSON safely — contains all CSV columns (Company, Phone, etc.)
+    let payloadObj = {};
+    try {
+      payloadObj = lead.payload
+        ? typeof lead.payload === "string"
+          ? JSON.parse(lead.payload)
+          : lead.payload
+        : {};
+    } catch (_) {
+      payloadObj = {};
+    }
 
-    // ✅ Signature: newlines ko <br> mein convert karo (HTML email ke liye)
+    const name  = lead.name  || payloadObj.name  || payloadObj.Name  || "";
+    const email = lead.email || payloadObj.email || payloadObj.Email || "";
+
+    // ✅ Convert newlines to <br> for HTML emails
     const sigHtml = signature ? String(signature).replace(/\n/g, "<br>") : "";
 
+    // Build replacement map — explicit fields first, then all payload fields
     const allFields = {
-      name, email,
-      Name: name, Email: email,
-      Signature: sigHtml,   // ✅ {Signature} replace hoga
-      signature: sigHtml,   // ✅ {signature} bhi (case-insensitive backup)
-      ...payload,
+      // Always available
+      name,       Name: name,
+      email,      Email: email,
+      Signature: sigHtml,
+      signature: sigHtml,
+      // ✅ Spread ALL payload fields so {Company}, {Phone}, {Custom} etc. all work
+      ...payloadObj,
     };
 
     for (const [key, value] of Object.entries(allFields)) {
-      const safe = String(value || "");
+      const safe = String(value ?? "");
+      // Replace {{key}} double-brace
       out = out.replace(new RegExp(`\\{\\{\\s*${key}\\s*\\}\\}`, "gi"), safe);
+      // Replace {key} single-brace
       out = out.replace(new RegExp(`\\{\\s*${key}\\s*\\}`, "gi"), safe);
     }
 
@@ -127,14 +143,14 @@ class EmailScheduler {
       `SELECT
          id,
          from_name,
-         from_email AS email,
+         from_email    AS email,
          smtp_username AS smtp_user,
          smtp_password AS app_password,
          smtp_host,
          smtp_port,
          smtp_security,
          daily_limit,
-         signature         -- ✅ signature bhi fetch karo
+         signature
        FROM user_email_accounts
        WHERE user_id = ?`,
       [userId]
@@ -154,13 +170,13 @@ class EmailScheduler {
         [account.email]
       );
 
-      const sentCount = sentToday[0]?.sent_count || 0;
+      const sentCount  = sentToday[0]?.sent_count || 0;
       const dailyLimit = Number(account.daily_limit || 0);
-      const remaining = Math.max(0, dailyLimit - sentCount);
+      const remaining  = Math.max(0, dailyLimit - sentCount);
 
       accountsWithCapacity.push({
         ...account,
-        sentToday: sentCount,
+        sentToday:     sentCount,
         remainingToday: remaining,
       });
     }
@@ -191,7 +207,7 @@ class EmailScheduler {
       `📊 Batch size: ${batchSize} (${emailAccounts.length} accounts × ${maxLevel} max_level)`
     );
 
-    let leadIndex = 0;
+    let leadIndex   = 0;
     let accountIndex = 0;
 
     while (leadIndex < batchSize && leadIndex < leads.length) {
@@ -242,10 +258,11 @@ class EmailScheduler {
     console.log(`\n📧 Campaign: "${campaign.name}" (id: ${campaign.id})`);
 
     const maxLevel = campaign.max_level || 100;
-    const delayMs = campaign.delay_ms || 200;
+    const delayMs  = campaign.delay_ms  || 200;
 
     console.log(`⚙️ Settings: max_level=${maxLevel}, delay_ms=${delayMs}ms`);
 
+    // ✅ Mark unsubscribed leads before sending
     const [unsubMarkResult] = await conn.query(
       `UPDATE campaign_data cd
        JOIN unsubscribes u
@@ -264,21 +281,23 @@ class EmailScheduler {
       [campaign.user_id, campaign.id]
     );
 
-    console.log(`🚫 Marked ${unsubMarkResult.affectedRows || 0} leads as unsubscribed before sending`);
+    console.log(`🚫 Marked ${unsubMarkResult.affectedRows || 0} leads as unsubscribed`);
 
-    let totalSent = 0;
+    let totalSent   = 0;
     let totalFailed = 0;
     let batchNumber = 0;
 
     try {
+      // ✅ Fetch fresh subject + content from email_templates — NOT stale campaign.content
       const [templates] = await conn.query(
-        `SELECT content FROM email_templates WHERE id = ?`,
+        `SELECT subject, content FROM email_templates WHERE id = ?`,
         [campaign.template_id]
       );
 
-      const templateContent = templates?.[0]?.content || "";
-      if (!templateContent) {
-        console.error("❌ No template content found");
+      const templateRow = templates?.[0];
+
+      if (!templateRow || !templateRow.content) {
+        console.error("❌ No template found for id:", campaign.template_id);
         await conn.query(
           `UPDATE email_campaigns SET status = 'failed', updated_at = NOW() WHERE id = ?`,
           [campaign.id]
@@ -286,15 +305,36 @@ class EmailScheduler {
         return;
       }
 
-      await conn.query(
-        `UPDATE email_campaigns SET status = 'sending', updated_at = NOW() WHERE id = ?`,
-        [campaign.id]
+      const templateContent = templateRow.content;
+
+      // ✅ Subject from template (fresh), fallback to campaign.subject
+      const emailSubject = String(
+        templateRow.subject?.trim() || campaign.subject || ""
       );
 
+      if (!emailSubject) {
+        console.error("❌ No subject in template or campaign");
+        await conn.query(
+          `UPDATE email_campaigns SET status = 'failed', updated_at = NOW() WHERE id = ?`,
+          [campaign.id]
+        );
+        return;
+      }
+
+      console.log(`📝 Subject: "${emailSubject}"`);
+
+      // ✅ Sync subject to campaign row + mark as sending
+      await conn.query(
+        `UPDATE email_campaigns SET subject = ?, status = 'sending', updated_at = NOW() WHERE id = ?`,
+        [emailSubject, campaign.id]
+      );
+
+      // ─── Batch sending loop ────────────────────────────────────────────────
       while (true) {
         batchNumber++;
         console.log(`\n🔄 === BATCH ${batchNumber} ===`);
 
+        // ✅ Fetch leads WITH payload column so placeholders can be merged
         const [leads] = await conn.query(
           `SELECT cd.id, cd.email, cd.name, cd.payload
            FROM campaign_data cd
@@ -308,7 +348,7 @@ class EmailScheduler {
           break;
         }
 
-        console.log(`📬 Pending leads in stack: ${leads.length}`);
+        console.log(`📬 Pending leads: ${leads.length}`);
 
         const emailAccounts = await this.getEmailAccountCapacity(conn, campaign.user_id);
         if (!emailAccounts.length) {
@@ -341,52 +381,53 @@ class EmailScheduler {
 
         console.log(`🎯 Sending batch ${batchNumber} (${distribution.length} emails)...`);
 
-        let batchSent = 0;
+        let batchSent   = 0;
         let batchFailed = 0;
-        const appUrl = this.getAppUrl();
+        const appUrl    = this.getAppUrl();
 
         for (const item of distribution) {
           const { lead, account } = item;
-          const leadEmailNorm = this.normalizeEmail(lead.email);
-          const transporter = createTransporter(account);
+          const leadEmailNorm     = this.normalizeEmail(lead.email);
+          const transporter       = createTransporter(account);
 
           try {
-            // ✅ FIX: account.signature pass karo — {Signature} replace hoga
+            // ✅ Merge ALL placeholders: {Name}, {Company}, {Signature}, {{name}} etc.
+            // account.signature is passed so {Signature} is replaced correctly
             let emailContent = this.mergePlaceholders(
               templateContent,
               lead,
-              account.signature || ""   // ← yahan signature inject ho rahi hai
+              account.signature || ""
             );
 
-            const trackingPixel = `<img src="${appUrl}/api/track/open?cid=${campaign.id}&email=${encodeURIComponent(
-              lead.email
-            )}&t=${Date.now()}" width="1" height="1" style="display:none" />`;
+            // ✅ Tracking pixel
+            const trackingPixel = `<img src="${appUrl}/api/track/open?cid=${campaign.id}&email=${encodeURIComponent(lead.email)}&t=${Date.now()}" width="1" height="1" style="display:none" />`;
             emailContent += trackingPixel;
 
+            // ✅ Unsubscribe link
             const token = sign({
-              email: leadEmailNorm,
-              userId: campaign.user_id,
+              email:      leadEmailNorm,
+              userId:     campaign.user_id,
               campaignId: campaign.id,
-              scope: "all",
-              exp: Date.now() + 365 * 24 * 60 * 60 * 1000,
+              scope:      "all",
+              exp:        Date.now() + 365 * 24 * 60 * 60 * 1000,
             });
 
             const unsubUrl = `${appUrl}/unsubscribe?token=${encodeURIComponent(token)}`;
 
             emailContent += `
               <hr/>
-              <p style="font-size:12px;color:#666">
+              <p style="font-size:12px;color:#666;font-family:sans-serif;">
                 Don't want these emails?
                 <a href="${unsubUrl}">Unsubscribe</a>
               </p>`;
 
             await transporter.sendMail({
-              from: `"${account.from_name || "Campaign"}" <${account.email}>`,
-              to: lead.email,
-              subject: campaign.subject,
-              html: emailContent,
+              from:    `"${account.from_name || "Campaign"}" <${account.email}>`,
+              to:      lead.email,
+              subject: emailSubject,   // ✅ Always from template
+              html:    emailContent,   // ✅ Fully placeholder-replaced
               headers: {
-                "List-Unsubscribe": `<${unsubUrl}>`,
+                "List-Unsubscribe":      `<${unsubUrl}>`,
                 "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
               },
             });
@@ -424,11 +465,11 @@ class EmailScheduler {
 
         await conn.query(
           `UPDATE email_campaigns
-           SET sent_count = ?,
-               failed_count = ?,
+           SET sent_count        = ?,
+               failed_count      = ?,
                unsubscribed_count = ?,
-               status = 'sending',
-               updated_at = NOW()
+               status            = 'sending',
+               updated_at        = NOW()
            WHERE id = ?`,
           [totalSent, totalFailed, batchUnsubCount, campaign.id]
         );
@@ -443,38 +484,38 @@ class EmailScheduler {
         );
 
         if ((remaining[0]?.count || 0) > 0) {
-          console.log(
-            `⏳ ${remaining[0].count} leads remaining - waiting ${delayMs}ms before next batch...`
-          );
+          console.log(`⏳ ${remaining[0].count} leads remaining - next batch in ${delayMs}ms...`);
           await this.delay(delayMs);
         } else {
           console.log("✅ Stack empty - All emails sent!");
           break;
         }
       }
+      // ─── End batch loop ────────────────────────────────────────────────────
 
       const finalUnsubCount = await this.getUnsubscribedCount(conn, campaign.id);
 
       await conn.query(
         `UPDATE email_campaigns
-         SET status = 'sent',
-             sent_count = ?,
-             failed_count = ?,
+         SET status            = 'sent',
+             sent_count        = ?,
+             failed_count      = ?,
              unsubscribed_count = ?,
-             completed_at = NOW(),
-             updated_at = NOW()
+             completed_at      = NOW(),
+             updated_at        = NOW()
          WHERE id = ?`,
         [totalSent, totalFailed, finalUnsubCount, campaign.id]
       );
 
       console.log(`\n🏁 CAMPAIGN COMPLETE!`);
-      console.log(`📊 Total Batches: ${batchNumber}`);
-      console.log(`📧 Total Sent: ${totalSent}`);
-      console.log(`❌ Total Failed: ${totalFailed}`);
+      console.log(`📊 Total Batches:      ${batchNumber}`);
+      console.log(`📧 Total Sent:         ${totalSent}`);
+      console.log(`❌ Total Failed:       ${totalFailed}`);
       console.log(`🚫 Total Unsubscribed: ${finalUnsubCount}`);
 
-      this.stats.totalSent += totalSent;
+      this.stats.totalSent   += totalSent;
       this.stats.totalFailed += totalFailed;
+
     } catch (err) {
       console.error("❌ sendCampaign crash:", err);
       await conn.query(
@@ -492,8 +533,8 @@ class EmailScheduler {
     return {
       ...this.stats,
       isProcessing: this.isProcessing,
-      isPaused: this.isPaused,
-      isRunning: this.cronJob !== null,
+      isPaused:     this.isPaused,
+      isRunning:    this.cronJob !== null,
     };
   }
 }

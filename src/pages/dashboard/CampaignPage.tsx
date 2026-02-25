@@ -92,48 +92,30 @@ function safeJsonParse<T = any>(s: string | null, fallback: T): T {
   }
 }
 
-/**
- * ✅ FIX: Case-insensitive field getter for lead objects
- * CSV columns like "Name", "NAME", "name" sab handle karta hai
- */
 function getLeadField(lead: Lead, ...fieldNames: string[]): string {
   if (!lead || typeof lead !== "object") return "";
   const keys = Object.keys(lead);
   for (const field of fieldNames) {
-    // Exact match first
     if (typeof lead[field] === "string" && lead[field].trim()) return lead[field].trim();
-    // Case-insensitive match
     const found = keys.find(k => k.toLowerCase() === field.toLowerCase());
     if (found && typeof lead[found] === "string" && lead[found].trim()) return lead[found].trim();
   }
   return "";
 }
 
-/**
- * ✅ FIX: Extract name from lead — handles Name, name, NAME, firstName+lastName
- */
 function extractLeadName(lead: Lead): string {
-  // Try "name" / "Name" / "NAME"
   const name = getLeadField(lead, "name");
   if (name) return name;
-
-  // Try firstName + lastName combo
   const first = getLeadField(lead, "firstName", "first_name", "First Name", "FirstName");
   const last = getLeadField(lead, "lastName", "last_name", "Last Name", "LastName");
   const full = `${first} ${last}`.trim();
   return full || "-";
 }
 
-/**
- * ✅ FIX: Extract email — handles "Email", "email", "EMAIL"
- */
 function extractLeadEmail(lead: Lead): string {
   return getLeadField(lead, "email", "Email", "EMAIL") || lead.email || "";
 }
 
-/**
- * ✅ FIX: Extract company — handles "Company", "company", "COMPANY"
- */
 function extractLeadCompany(lead: Lead): string {
   return getLeadField(lead, "company", "Company", "COMPANY") || "-";
 }
@@ -142,7 +124,6 @@ function extractLeadCompany(lead: Lead): string {
 
 const CampaignPage = () => {
   const [campaignName, setCampaignName] = useState('');
-  const [emailSubject, setEmailSubject] = useState('');
   const [selectedTemplate, setSelectedTemplate] = useState<EmailTemplate | null>(null);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [isSending, setIsSending] = useState(false);
@@ -170,7 +151,6 @@ const CampaignPage = () => {
   const [followupDelayHours, setFollowupDelayHours] = useState(0.083);
   const [followupCondition, setFollowupCondition] = useState<'not_opened' | 'not_clicked' | 'always' | 'no_reply'>('not_opened');
 
-  // Pagination / search
   const [scheduleAt, setScheduleAt] = useState('');
   const [sendingCampaignId, setSendingCampaignId] = useState<number | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
@@ -277,8 +257,9 @@ const CampaignPage = () => {
   const handleCreateCampaign = async () => {
     setErrors([]);
     if (!campaignName.trim()) { setErrors(['Campaign name is required']); return; }
-    if (!emailSubject.trim()) { setErrors(['Email subject is required']); return; }
     if (!selectedTemplate) { setErrors(['Please select an email template']); return; }
+    // ✅ Use template subject — validate it exists
+    if (!selectedTemplate.subject?.trim()) { setErrors(['Selected template has no subject. Please add a subject to the template first.']); return; }
     if (leads.length === 0) { setErrors(['Please upload leads before creating a campaign']); return; }
     if (followupEnabled && !followupTemplate) { setErrors(['Please select a follow-up template when follow-up is enabled']); return; }
 
@@ -286,7 +267,8 @@ const CampaignPage = () => {
       const campaignData = {
         userId,
         name: campaignName,
-        subject: emailSubject,
+        // ✅ Subject comes from template
+        subject: selectedTemplate.subject,
         templateId: selectedTemplate.id,
         template: selectedTemplate,
         leads,
@@ -321,7 +303,8 @@ const CampaignPage = () => {
           id: newId,
           userId,
           name: campaignName,
-          subject: emailSubject,
+          // ✅ Subject from template
+          subject: selectedTemplate.subject,
           template: selectedTemplate,
           leads,
           status: scheduleAt ? 'scheduled' : 'draft',
@@ -416,7 +399,6 @@ const CampaignPage = () => {
 
   return (
     <>
-      {/* ✅ ONLY CHANGE: header height fixed + centered (no py-4) */}
       <header className="bg-card shadow-sm border-b sticky top-0 z-50 h-16 flex items-center">
         <div className="px-6 w-full flex items-center justify-between">
           <h2 className="text-2xl font-semibold text-foreground">Campaign Management</h2>
@@ -452,7 +434,10 @@ const CampaignPage = () => {
           <div className={previewMode === 'mobile' ? 'mx-auto w-80 border rounded-lg p-4 bg-muted' : 'border rounded p-6 bg-muted'}>
             {selectedTemplate ? (
               <>
-                <div className="text-xs text-muted-foreground mb-2">{emailSubject || selectedTemplate.subject}</div>
+                {/* ✅ Subject shown from template */}
+                <div className="text-xs text-muted-foreground mb-2 font-medium">
+                  Subject: {selectedTemplate.subject || "(no subject)"}
+                </div>
                 <div className="font-bold mb-2">{selectedTemplate.name}</div>
                 <div className="text-foreground">
                   {selectedTemplate.contentType === 'html'
@@ -559,11 +544,6 @@ const CampaignPage = () => {
                 </div>
 
                 <div>
-                  <Label>Email Subject *</Label>
-                  <Input placeholder="Enter email subject" value={emailSubject} onChange={e => setEmailSubject(e.target.value)} />
-                </div>
-
-                <div>
                   <Label>Email Template *</Label>
                   <Select
                     value={selectedTemplate?.id.toString()}
@@ -579,6 +559,12 @@ const CampaignPage = () => {
                       ))}
                     </SelectContent>
                   </Select>
+                  {/* ✅ Show the template subject as read-only info */}
+                  {selectedTemplate?.subject && (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Subject: <span className="font-medium text-foreground">{selectedTemplate.subject}</span>
+                    </p>
+                  )}
                 </div>
 
                 <div>
@@ -720,11 +706,12 @@ const CampaignPage = () => {
                             ))}
                           </SelectContent>
                         </Select>
-                      </div>
-
-                      <div>
-                        <Label>Follow-up Subject</Label>
-                        <Input value={followupSubject} onChange={e => setFollowupSubject(e.target.value)} />
+                        {/* ✅ Show followup template subject as read-only */}
+                        {followupTemplate?.subject && (
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Subject: <span className="font-medium text-foreground">{followupTemplate.subject}</span>
+                          </p>
+                        )}
                       </div>
 
                       <div>
