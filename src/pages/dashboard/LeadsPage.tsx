@@ -31,14 +31,6 @@ import {
   Eye,
 } from "lucide-react";
 
-/**
- * ✅ Only change in this update:
- * - Header is sticky (does not scroll)
- * - Main page becomes the scroll container
- * - Leads table body scrolls (table header stays visible)
- * ✅ Everything else is kept the same (UI/design/logic unchanged)
- */
-
 type UiLead = {
   id: number;
   email: string;
@@ -53,7 +45,6 @@ type UiLead = {
   tags: string[];
 };
 
-// Backend row shape (based on your /api/leads screenshot)
 type ApiLead = {
   id: number;
   email: string;
@@ -63,12 +54,21 @@ type ApiLead = {
   status?: string | null;
   engagement?: string | null;
   score?: number | string | null;
-  tags?: string | null; // often comma or pipe separated
+  tags?: string | null;
   created_at?: string | null;
 };
 
+// ✅ userId getter — localStorage se (same pattern as Dashboard/Campaign)
+const safeJsonParse = <T,>(s: string | null, fallback: T): T => {
+  try { return s ? (JSON.parse(s) as T) : fallback; } catch { return fallback; }
+};
+const getCurrentUserId = (): number => {
+  const user = safeJsonParse<{ id?: number }>(localStorage.getItem("user"), {});
+  const n = Number(user?.id);
+  return Number.isFinite(n) && n > 0 ? n : 1;
+};
+
 const LeadsPage = () => {
-  // ✅ set this to your backend URL (env first)
   const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3001";
 
   const [selectedLeads, setSelectedLeads] = useState<number[]>([]);
@@ -99,16 +99,14 @@ const LeadsPage = () => {
   const normalizeStatus = (s: string | null | undefined) => {
     const v = String(s || "").trim();
     if (!v) return "Cold Lead";
-    // allow backend values like "Hot", "Cold"
     if (v.toLowerCase() === "hot") return "Hot Lead";
     if (v.toLowerCase() === "cold") return "Cold Lead";
-    return v; // "Replied", "Hot Lead", etc.
+    return v;
   };
 
   const normalizeEngagement = (e: string | null | undefined) => {
     const v = String(e || "").trim();
     if (!v) return "Low";
-    // keep as High/Medium/Low
     if (v.toLowerCase() === "high") return "High";
     if (v.toLowerCase() === "medium") return "Medium";
     if (v.toLowerCase() === "low") return "Low";
@@ -118,10 +116,7 @@ const LeadsPage = () => {
   const deriveNameFromEmail = (email: string) => {
     const local = (email || "").split("@")[0] || "";
     if (!local) return "Unknown";
-    const parts = local
-      .replace(/[._-]+/g, " ")
-      .split(" ")
-      .filter(Boolean);
+    const parts = local.replace(/[._-]+/g, " ").split(" ").filter(Boolean);
     const cap = (x: string) => x.charAt(0).toUpperCase() + x.slice(1);
     return parts.map(cap).join(" ") || "Unknown";
   };
@@ -130,17 +125,13 @@ const LeadsPage = () => {
     if (!t) return [];
     if (Array.isArray(t)) return t.map(String).filter(Boolean);
     const s = String(t);
-    return s
-      .split(/[|,]/)
-      .map((x) => x.trim())
-      .filter(Boolean);
+    return s.split(/[|,]/).map((x) => x.trim()).filter(Boolean);
   };
 
   const mapApiToUi = (row: ApiLead): UiLead => {
     const first = String(row.first_name || "").trim();
     const last = String(row.last_name || "").trim();
     const full = `${first} ${last}`.trim();
-
     const created = row.created_at ? String(row.created_at) : "";
     const addedDate = created ? created.slice(0, 10) : todayISO();
 
@@ -179,11 +170,12 @@ const LeadsPage = () => {
     return res.text();
   };
 
-  // ✅ FETCH LEADS (LIVE)
+  // ✅ FETCH LEADS — userId query param se bhejo
   const fetchLeads = async () => {
     setIsLoading(true);
     try {
-      const data = (await apiFetch("/api/leads", { method: "GET" })) as ApiLead[];
+      const userId = getCurrentUserId();
+      const data = (await apiFetch(`/api/leads?userId=${userId}`, { method: "GET" })) as ApiLead[];
       const ui = Array.isArray(data) ? data.map(mapApiToUi) : [];
       setLeads(ui);
       setSelectedLeads([]);
@@ -228,7 +220,6 @@ const LeadsPage = () => {
     }
   };
 
-  // CSV helpers
   const escapeCSV = (value: any) => {
     const s = String(value ?? "");
     if (s.includes(",") || s.includes('"') || s.includes("\n")) {
@@ -237,40 +228,11 @@ const LeadsPage = () => {
     return s;
   };
 
-  // ✅ Export ALL (current leads in UI)
+  // ✅ Export ALL
   const handleExportCSV = () => {
-    const header = [
-      "id",
-      "name",
-      "email",
-      "company",
-      "addedDate",
-      "campaigns",
-      "lastCampaign",
-      "status",
-      "score",
-      "engagement",
-      "tags",
-    ];
-
-    const rows = leads.map((l) => [
-      l.id,
-      l.name,
-      l.email,
-      l.company,
-      l.addedDate,
-      l.campaigns,
-      l.lastCampaign,
-      l.status,
-      l.score,
-      l.engagement,
-      (l.tags || []).join("|"),
-    ]);
-
-    const csv = [header.join(","), ...rows.map((r) => r.map(escapeCSV).join(","))].join(
-      "\n"
-    );
-
+    const header = ["id","name","email","company","addedDate","campaigns","lastCampaign","status","score","engagement","tags"];
+    const rows = leads.map((l) => [l.id, l.name, l.email, l.company, l.addedDate, l.campaigns, l.lastCampaign, l.status, l.score, l.engagement, (l.tags || []).join("|")]);
+    const csv = [header.join(","), ...rows.map((r) => r.map(escapeCSV).join(","))].join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -284,39 +246,9 @@ const LeadsPage = () => {
   const handleExportSelectedCSV = () => {
     const selected = leads.filter((l) => selectedLeads.includes(l.id));
     if (!selected.length) return;
-
-    const header = [
-      "id",
-      "name",
-      "email",
-      "company",
-      "addedDate",
-      "campaigns",
-      "lastCampaign",
-      "status",
-      "score",
-      "engagement",
-      "tags",
-    ];
-
-    const rows = selected.map((l) => [
-      l.id,
-      l.name,
-      l.email,
-      l.company,
-      l.addedDate,
-      l.campaigns,
-      l.lastCampaign,
-      l.status,
-      l.score,
-      l.engagement,
-      (l.tags || []).join("|"),
-    ]);
-
-    const csv = [header.join(","), ...rows.map((r) => r.map(escapeCSV).join(","))].join(
-      "\n"
-    );
-
+    const header = ["id","name","email","company","addedDate","campaigns","lastCampaign","status","score","engagement","tags"];
+    const rows = selected.map((l) => [l.id, l.name, l.email, l.company, l.addedDate, l.campaigns, l.lastCampaign, l.status, l.score, l.engagement, (l.tags || []).join("|")]);
+    const csv = [header.join(","), ...rows.map((r) => r.map(escapeCSV).join(","))].join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -330,7 +262,6 @@ const LeadsPage = () => {
     if (fileInputRef.current) fileInputRef.current.click();
   };
 
-  // Parse CSV (same as your version)
   const parseCSV = (text: string) => {
     const lines = text.split(/\r?\n/).filter(Boolean);
     if (!lines.length) return [];
@@ -339,28 +270,19 @@ const LeadsPage = () => {
       const out: string[] = [];
       let cur = "";
       let inQuotes = false;
-
       for (let i = 0; i < line.length; i++) {
         const ch = line[i];
-        if (ch === '"' && line[i + 1] === '"') {
-          cur += '"';
-          i++;
-        } else if (ch === '"') {
-          inQuotes = !inQuotes;
-        } else if (ch === "," && !inQuotes) {
-          out.push(cur);
-          cur = "";
-        } else {
-          cur += ch;
-        }
+        if (ch === '"' && line[i + 1] === '"') { cur += '"'; i++; }
+        else if (ch === '"') { inQuotes = !inQuotes; }
+        else if (ch === "," && !inQuotes) { out.push(cur); cur = ""; }
+        else { cur += ch; }
       }
       out.push(cur);
       return out.map((s) => s.trim());
     };
 
     const header = splitLine(lines[0]).map((h) => h.trim());
-    const idx = (name: string) =>
-      header.findIndex((h) => h.toLowerCase() === name.toLowerCase());
+    const idx = (name: string) => header.findIndex((h) => h.toLowerCase() === name.toLowerCase());
 
     const iName = idx("name");
     const iEmail = idx("email");
@@ -377,7 +299,6 @@ const LeadsPage = () => {
       const cols = splitLine(lines[r]);
       const email = cols[iEmail] || "";
       if (!email) continue;
-
       items.push({
         name: iName !== -1 ? cols[iName] || "" : "",
         email,
@@ -391,7 +312,7 @@ const LeadsPage = () => {
     return items;
   };
 
-  // ✅ Import CSV -> LIVE backend bulk endpoint
+  // ✅ Import CSV — userId bhejo
   const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     try {
       const file = e.target.files?.[0];
@@ -405,12 +326,12 @@ const LeadsPage = () => {
         return;
       }
 
-      // Convert to what backend usually expects
+      const userId = getCurrentUserId();
+
       const payloadLeads = parsed.map((p: any) => {
         const fullName = String(p.name || "").trim();
         const [first_name, ...rest] = fullName.split(" ");
         const last_name = rest.join(" ").trim();
-
         return {
           email: String(p.email || "").trim(),
           first_name: first_name ? String(first_name).trim() : "",
@@ -419,17 +340,14 @@ const LeadsPage = () => {
           status: normalizeStatus(p.status),
           engagement: normalizeEngagement(p.engagement),
           score: Number(p.score ?? 50) || 50,
-          tags: String(p.tags || "")
-            .split(/[|,]/)
-            .map((t: string) => t.trim())
-            .filter(Boolean)
-            .join(","), // send as string
+          tags: String(p.tags || "").split(/[|,]/).map((t: string) => t.trim()).filter(Boolean).join(","),
         };
       });
 
-      await apiFetch("/api/leads/bulk", {
+      // ✅ userId query param + body dono mein bhejo
+      await apiFetch(`/api/leads/bulk?userId=${userId}`, {
         method: "POST",
-        body: JSON.stringify({ leads: payloadLeads }),
+        body: JSON.stringify({ userId, leads: payloadLeads }),
       });
 
       await fetchLeads();
@@ -442,23 +360,22 @@ const LeadsPage = () => {
     }
   };
 
-  // ✅ Add Lead -> LIVE backend
+  // ✅ Add Lead — userId bhejo
   const handleAddLeadSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-
-    if (!newLead.email.trim()) {
-      alert("Email is required");
-      return;
-    }
+    if (!newLead.email.trim()) { alert("Email is required"); return; }
 
     try {
+      const userId = getCurrentUserId();
       const full = newLead.name.trim();
       const [first_name, ...rest] = full.split(" ");
       const last_name = rest.join(" ").trim();
 
-      await apiFetch("/api/leads", {
+      // ✅ userId query param + body dono mein bhejo
+      await apiFetch(`/api/leads?userId=${userId}`, {
         method: "POST",
         body: JSON.stringify({
+          userId,
           email: newLead.email.trim(),
           first_name: first_name || "",
           last_name: last_name || "",
@@ -466,134 +383,92 @@ const LeadsPage = () => {
           status: normalizeStatus(newLead.status),
           engagement: normalizeEngagement(newLead.engagement),
           score: Number(newLead.score) || 50,
-          tags: String(newLead.tags || "")
-            .split(/[|,]/)
-            .map((t) => t.trim())
-            .filter(Boolean)
-            .join(","),
+          tags: String(newLead.tags || "").split(/[|,]/).map((t) => t.trim()).filter(Boolean).join(","),
         }),
       });
 
       await fetchLeads();
-
       setIsAddOpen(false);
-      setNewLead({
-        name: "",
-        email: "",
-        company: "",
-        status: "Cold Lead",
-        engagement: "Low",
-        score: 50,
-        tags: "",
-      });
+      setNewLead({ name: "", email: "", company: "", status: "Cold Lead", engagement: "Low", score: 50, tags: "" });
     } catch (err: any) {
       console.error(err);
       alert(`Save lead failed ❌\n${err?.message || err}`);
     }
   };
 
-  // ✅ Add tag to selected -> tries backend PUT, then refresh
+  // ✅ Add tag to selected
   const applyTagToSelected = async () => {
     const t = tagToAdd.trim();
     if (!t) return alert("Enter a tag first");
     if (!selectedLeads.length) return alert("Select leads first");
 
     try {
-      // If your backend supports bulk tag update, change here.
-      // Otherwise, update one by one:
       for (const id of selectedLeads) {
         const lead = leads.find((x) => x.id === id);
         if (!lead) continue;
-        const nextTags = Array.from(
-          new Set([...(lead.tags || []), t].map((x) => String(x)))
-        );
-
+        const nextTags = Array.from(new Set([...(lead.tags || []), t].map((x) => String(x))));
         await apiFetch(`/api/leads/${id}`, {
           method: "PUT",
-          body: JSON.stringify({
-            tags: nextTags.join(","), // backend-friendly string
-          }),
+          body: JSON.stringify({ tags: nextTags.join(",") }),
         });
       }
-
       await fetchLeads();
       setTagToAdd("");
       alert("Tag added ✅");
     } catch (err: any) {
       console.error(err);
-      alert(
-        `Add tag failed ❌\nYour backend must support PUT /api/leads/:id\n${err?.message || err}`
-      );
+      alert(`Add tag failed ❌\n${err?.message || err}`);
     }
   };
 
-  // ✅ Delete lead -> LIVE backend
+  // ✅ Delete lead
   const deleteLead = async (id: number, email: string) => {
     const ok = confirm(`Delete lead: ${email}?`);
     if (!ok) return;
-
     try {
       await apiFetch(`/api/leads/${id}`, { method: "DELETE" });
       await fetchLeads();
     } catch (err: any) {
       console.error(err);
-      alert(
-        `Delete failed ❌\nYour backend must support DELETE /api/leads/:id\n${err?.message || err}`
-      );
+      alert(`Delete failed ❌\n${err?.message || err}`);
     }
   };
 
   // ✅ Visible leads with filters
   const visibleLeads = useMemo(() => {
     let data = leads;
-
-    if (filterStatus === "hot")
-      data = data.filter((l) => normalizeStatus(l.status) === "Hot Lead");
-    if (filterStatus === "replied")
-      data = data.filter((l) => normalizeStatus(l.status) === "Replied");
-    if (filterStatus === "cold")
-      data = data.filter((l) => normalizeStatus(l.status) === "Cold Lead");
-
+    if (filterStatus === "hot") data = data.filter((l) => normalizeStatus(l.status) === "Hot Lead");
+    if (filterStatus === "replied") data = data.filter((l) => normalizeStatus(l.status) === "Replied");
+    if (filterStatus === "cold") data = data.filter((l) => normalizeStatus(l.status) === "Cold Lead");
     if (filterEngagement !== "all") {
       const fe = filterEngagement.toLowerCase();
       data = data.filter((l) => String(l.engagement || "").toLowerCase() === fe);
     }
-
-    const q = searchText.trim().toLowerCase();
-    if (q) {
+    const sq = searchText.trim().toLowerCase();
+    if (sq) {
       data = data.filter(
         (l) =>
-          (l.email || "").toLowerCase().includes(q) ||
-          (l.name || "").toLowerCase().includes(q) ||
-          (l.company || "").toLowerCase().includes(q)
+          (l.email || "").toLowerCase().includes(sq) ||
+          (l.name || "").toLowerCase().includes(sq) ||
+          (l.company || "").toLowerCase().includes(sq)
       );
     }
-
     return data;
   }, [leads, filterStatus, filterEngagement, searchText]);
 
   return (
     <div className="h-screen flex flex-col">
-      {/* ✅ Sticky header (does not scroll) */}
-      {/* ✅ ONLY CHANGE: make header a fixed single-line height like other pages */}
+      {/* ✅ Sticky header */}
       <header className="bg-white shadow-sm border-b border-gray-200 sticky top-0 z-50 h-16 flex items-center">
         <div className="px-6 w-full flex items-center justify-between">
-          <h2
-            className="text-2xl font-nunito font-semibold"
-            style={{ color: "#012970" }}
-          >
+          <h2 className="text-2xl font-nunito font-semibold" style={{ color: "#012970" }}>
             Data Management
           </h2>
           <div className="flex gap-3">
-            <Button
-              variant="outline"
-              className="border-gray-300"
-              onClick={handleExportCSV}
-            >
+            <Button variant="outline" className="border-gray-300" onClick={handleExportCSV}>
               <Download className="mr-2 h-4 w-4" />
               Export CSV
             </Button>
-
             <Button
               className="text-white font-medium"
               style={{ backgroundColor: "#1e3a8a" }}
@@ -602,7 +477,6 @@ const LeadsPage = () => {
               <Upload className="mr-2 h-4 w-4" />
               Import Data
             </Button>
-
             <Button
               className="text-white font-medium"
               style={{ backgroundColor: "#1e3a8a" }}
@@ -610,7 +484,6 @@ const LeadsPage = () => {
             >
               Add Data
             </Button>
-
             <input
               ref={fileInputRef}
               type="file"
@@ -622,7 +495,7 @@ const LeadsPage = () => {
         </div>
       </header>
 
-      {/* ✅ Main scroll area (only this scrolls) */}
+      {/* ✅ Main scroll area */}
       <main className="p-6 overflow-y-auto flex-1">
         {/* Stats Cards */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
@@ -648,9 +521,7 @@ const LeadsPage = () => {
                 <div>
                   <p className="text-sm text-gray-600">Hot Leads</p>
                   <p className="text-2xl font-bold text-red-600">
-                    {leads
-                      .filter((l) => normalizeStatus(l.status) === "Hot Lead")
-                      .length.toLocaleString()}
+                    {leads.filter((l) => normalizeStatus(l.status) === "Hot Lead").length.toLocaleString()}
                   </p>
                 </div>
                 <div className="bg-red-100 p-2 rounded-lg">
@@ -666,9 +537,7 @@ const LeadsPage = () => {
                 <div>
                   <p className="text-sm text-gray-600">Replied</p>
                   <p className="text-2xl font-bold text-green-600">
-                    {leads
-                      .filter((l) => normalizeStatus(l.status) === "Replied")
-                      .length.toLocaleString()}
+                    {leads.filter((l) => normalizeStatus(l.status) === "Replied").length.toLocaleString()}
                   </p>
                 </div>
                 <div className="bg-green-100 p-2 rounded-lg">
@@ -724,7 +593,6 @@ const LeadsPage = () => {
                 </SelectContent>
               </Select>
 
-              {/* ✅ Engagement filter WORKING */}
               <Select value={filterEngagement} onValueChange={setFilterEngagement}>
                 <SelectTrigger className="w-48">
                   <SelectValue placeholder="Filter by engagement" />
@@ -747,36 +615,21 @@ const LeadsPage = () => {
               </Button>
             </div>
 
-            {/* ✅ More Filters panel (same UI style) */}
             {isMoreFiltersOpen && (
               <div className="mt-4 p-4 border border-gray-200 rounded-md bg-gray-50">
                 <div className="flex flex-col md:flex-row gap-3 md:items-center">
-                  <Label className="text-sm text-gray-600">
-                    Add tag to selected Data
-                  </Label>
+                  <Label className="text-sm text-gray-600">Add tag to selected Data</Label>
                   <Input
                     className="md:w-64"
                     placeholder="e.g. fintech"
                     value={tagToAdd}
                     onChange={(e) => setTagToAdd(e.target.value)}
                   />
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="border-gray-300"
-                    onClick={applyTagToSelected}
-                  >
+                  <Button size="sm" variant="outline" className="border-gray-300" onClick={applyTagToSelected}>
                     <Tag className="mr-2 h-4 w-4" />
                     Apply Tag
                   </Button>
-
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="border-gray-300"
-                    onClick={fetchLeads}
-                    disabled={isLoading}
-                  >
+                  <Button size="sm" variant="outline" className="border-gray-300" onClick={fetchLeads} disabled={isLoading}>
                     {isLoading ? "Refreshing..." : "Refresh"}
                   </Button>
                 </div>
@@ -785,24 +638,12 @@ const LeadsPage = () => {
 
             {selectedLeads.length > 0 && (
               <div className="mt-4 flex items-center space-x-2">
-                <span className="text-sm text-gray-600">
-                  {selectedLeads.length} data selected
-                </span>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="border-gray-300"
-                  onClick={() => setIsMoreFiltersOpen(true)}
-                >
+                <span className="text-sm text-gray-600">{selectedLeads.length} data selected</span>
+                <Button size="sm" variant="outline" className="border-gray-300" onClick={() => setIsMoreFiltersOpen(true)}>
                   <Tag className="mr-2 h-4 w-4" />
                   Add Tag
                 </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="border-gray-300"
-                  onClick={handleExportSelectedCSV}
-                >
+                <Button size="sm" variant="outline" className="border-gray-300" onClick={handleExportSelectedCSV}>
                   Export Selected
                 </Button>
               </div>
@@ -813,17 +654,13 @@ const LeadsPage = () => {
         {/* Leads Table */}
         <Card className="border border-gray-200 shadow-sm overflow-hidden">
           <CardContent className="p-0">
-            {/* ✅ Only table area scrolls, header stays visible */}
             <div className="max-h-[60vh] overflow-y-auto">
               <Table>
                 <TableHeader className="sticky top-0 z-30 bg-white">
                   <TableRow className="border-b border-gray-200">
                     <TableHead className="w-12">
                       <Checkbox
-                        checked={
-                          selectedLeads.length === visibleLeads.length &&
-                          visibleLeads.length > 0
-                        }
+                        checked={selectedLeads.length === visibleLeads.length && visibleLeads.length > 0}
                         onCheckedChange={(checked) => {
                           if (checked) setSelectedLeads(visibleLeads.map((lead) => lead.id));
                           else setSelectedLeads([]);
@@ -890,12 +727,7 @@ const LeadsPage = () => {
                           <div className="w-12 bg-gray-200 rounded-full h-2">
                             <div
                               className="bg-blue-600 h-2 rounded-full"
-                              style={{
-                                width: `${Math.max(
-                                  0,
-                                  Math.min(100, Number(lead.score) || 0)
-                                )}%`,
-                              }}
+                              style={{ width: `${Math.max(0, Math.min(100, Number(lead.score) || 0))}%` }}
                             ></div>
                           </div>
                           <span className="text-sm font-medium">{lead.score}</span>
@@ -922,7 +754,6 @@ const LeadsPage = () => {
                       </TableCell>
 
                       <TableCell>
-                        {/* ✅ Row action wired: delete */}
                         <Button
                           size="sm"
                           variant="ghost"
@@ -935,7 +766,6 @@ const LeadsPage = () => {
                     </TableRow>
                   ))}
 
-                  {/* Empty state */}
                   {!visibleLeads.length && (
                     <TableRow>
                       <TableCell colSpan={11} className="py-10 text-center text-gray-500">
@@ -1011,10 +841,7 @@ const LeadsPage = () => {
               <h3 className="text-lg font-semibold" style={{ color: "#012970" }}>
                 Add Data
               </h3>
-              <button
-                className="text-gray-500 hover:text-gray-700"
-                onClick={() => setIsAddOpen(false)}
-              >
+              <button className="text-gray-500 hover:text-gray-700" onClick={() => setIsAddOpen(false)}>
                 ✕
               </button>
             </div>
@@ -1023,24 +850,15 @@ const LeadsPage = () => {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <Label>Name</Label>
-                  <Input
-                    value={newLead.name}
-                    onChange={(e) => setNewLead({ ...newLead, name: e.target.value })}
-                  />
+                  <Input value={newLead.name} onChange={(e) => setNewLead({ ...newLead, name: e.target.value })} />
                 </div>
                 <div>
                   <Label>Email *</Label>
-                  <Input
-                    value={newLead.email}
-                    onChange={(e) => setNewLead({ ...newLead, email: e.target.value })}
-                  />
+                  <Input value={newLead.email} onChange={(e) => setNewLead({ ...newLead, email: e.target.value })} />
                 </div>
                 <div className="md:col-span-2">
                   <Label>Company</Label>
-                  <Input
-                    value={newLead.company}
-                    onChange={(e) => setNewLead({ ...newLead, company: e.target.value })}
-                  />
+                  <Input value={newLead.company} onChange={(e) => setNewLead({ ...newLead, company: e.target.value })} />
                 </div>
 
                 <div>
@@ -1061,9 +879,7 @@ const LeadsPage = () => {
                   <select
                     className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
                     value={newLead.engagement}
-                    onChange={(e) =>
-                      setNewLead({ ...newLead, engagement: e.target.value })
-                    }
+                    onChange={(e) => setNewLead({ ...newLead, engagement: e.target.value })}
                   >
                     <option>High</option>
                     <option>Medium</option>
@@ -1090,19 +906,10 @@ const LeadsPage = () => {
               </div>
 
               <div className="flex justify-end gap-3 pt-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="border-gray-300"
-                  onClick={() => setIsAddOpen(false)}
-                >
+                <Button type="button" variant="outline" className="border-gray-300" onClick={() => setIsAddOpen(false)}>
                   Cancel
                 </Button>
-                <Button
-                  type="submit"
-                  className="text-white font-medium"
-                  style={{ backgroundColor: "#1e3a8a" }}
-                >
+                <Button type="submit" className="text-white font-medium" style={{ backgroundColor: "#1e3a8a" }}>
                   Save Data
                 </Button>
               </div>

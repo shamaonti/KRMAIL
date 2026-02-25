@@ -47,6 +47,12 @@ function normalizeLead(raw = {}) {
   };
 }
 
+// ✅ userId getter — query param ya body se (frontend localStorage se bhejta hai)
+function getUserId(req) {
+  const uid = parseInt(req.query.userId || req.body?.userId || 0, 10);
+  return Number.isFinite(uid) && uid > 0 ? uid : null;
+}
+
 function sendDbError(res, where, err) {
   console.error(`❌ ${where}:`, err);
   return res.status(500).json({
@@ -59,10 +65,16 @@ function sendDbError(res, where, err) {
 // ✅ Health check
 router.get("/health", (req, res) => res.json({ ok: true }));
 
-// ✅ GET all leads
+// ✅ GET all leads — sirf logged-in user ki leads
 router.get("/", async (req, res) => {
   try {
-    const rows = await q("SELECT * FROM leads ORDER BY id DESC");
+    const userId = getUserId(req);
+    if (!userId) return res.status(400).json({ message: "userId required" });
+
+    const rows = await q(
+      "SELECT * FROM leads WHERE user_id = ? ORDER BY id DESC",
+      [userId]
+    );
     return res.json(rows);
   } catch (err) {
     return sendDbError(res, "Failed to fetch leads", err);
@@ -81,19 +93,27 @@ router.get("/:id", async (req, res) => {
   }
 });
 
-// ✅ CREATE lead
+// ✅ CREATE lead — user_id ke saath save karo
 router.post("/", async (req, res) => {
   try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(400).json({ message: "userId required" });
+
     const lead = normalizeLead(req.body);
     if (!lead.email) return res.status(400).json({ message: "Email is required" });
 
-    const dup = await q("SELECT id FROM leads WHERE email = ? LIMIT 1", [lead.email]);
+    // ✅ Duplicate check sirf is user ke liye
+    const dup = await q(
+      "SELECT id FROM leads WHERE email = ? AND user_id = ? LIMIT 1",
+      [lead.email, userId]
+    );
     if (dup.length) return res.status(409).json({ message: "Email already exists" });
 
     const result = await db.query(
-      `INSERT INTO leads (email, first_name, last_name, company, status, engagement, score, tags)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [lead.email, lead.first_name, lead.last_name, lead.company, lead.status, lead.engagement, lead.score, lead.tags]
+      `INSERT INTO leads (user_id, email, first_name, last_name, company, status, engagement, score, tags)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [userId, lead.email, lead.first_name, lead.last_name, lead.company,
+       lead.status, lead.engagement, lead.score, lead.tags]
     );
 
     const insertId = Array.isArray(result) ? result[0]?.insertId : result?.insertId;
@@ -110,22 +130,26 @@ router.put("/:id", async (req, res) => {
     const lead = normalizeLead(req.body);
 
     if (lead.email) {
-      const dup = await q("SELECT id FROM leads WHERE email = ? AND id <> ? LIMIT 1", [lead.email, id]);
+      const dup = await q(
+        "SELECT id FROM leads WHERE email = ? AND id <> ? LIMIT 1",
+        [lead.email, id]
+      );
       if (dup.length) return res.status(409).json({ message: "Email already exists" });
     }
 
     await q(
       `UPDATE leads
-       SET email = COALESCE(?, email),
+       SET email      = COALESCE(?, email),
            first_name = ?,
-           last_name = ?,
-           company = ?,
-           status = ?,
+           last_name  = ?,
+           company    = ?,
+           status     = ?,
            engagement = ?,
-           score = ?,
-           tags = ?
+           score      = ?,
+           tags       = ?
        WHERE id = ?`,
-      [lead.email || null, lead.first_name, lead.last_name, lead.company, lead.status, lead.engagement, lead.score, lead.tags, id]
+      [lead.email || null, lead.first_name, lead.last_name, lead.company,
+       lead.status, lead.engagement, lead.score, lead.tags, id]
     );
 
     return res.json({ message: "Lead updated" });
@@ -145,9 +169,12 @@ router.delete("/:id", async (req, res) => {
   }
 });
 
-// ✅ BULK IMPORT (skips duplicates)
+// ✅ BULK IMPORT — user_id save karo, sirf us user ki duplicates skip karo
 router.post("/bulk", async (req, res) => {
   try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(400).json({ message: "userId required" });
+
     const incoming = Array.isArray(req.body?.leads) ? req.body.leads : [];
     if (!incoming.length) return res.status(400).json({ message: "No leads provided" });
 
@@ -158,16 +185,16 @@ router.post("/bulk", async (req, res) => {
     const seen = new Set();
     const unique = [];
     for (const l of normalized) {
-      if (!seen.has(l.email)) {
-        seen.add(l.email);
-        unique.push(l);
-      }
+      if (!seen.has(l.email)) { seen.add(l.email); unique.push(l); }
     }
 
-    // skip existing in DB
+    // ✅ sirf is user ke existing emails skip karo
     const emails = unique.map(l => l.email);
     const placeholders = emails.map(() => "?").join(",");
-    const existing = await q(`SELECT email FROM leads WHERE email IN (${placeholders})`, emails);
+    const existing = await q(
+      `SELECT email FROM leads WHERE email IN (${placeholders}) AND user_id = ?`,
+      [...emails, userId]
+    );
     const existingSet = new Set(existing.map(r => String(r.email).toLowerCase()));
 
     const toInsert = unique.filter(l => !existingSet.has(l.email));
@@ -176,15 +203,14 @@ router.post("/bulk", async (req, res) => {
     }
 
     const values = [];
-    const rowsSql = toInsert
-      .map(l => {
-        values.push(l.email, l.first_name, l.last_name, l.company, l.status, l.engagement, l.score, l.tags);
-        return "(?, ?, ?, ?, ?, ?, ?, ?)";
-      })
-      .join(",");
+    const rowsSql = toInsert.map(l => {
+      values.push(userId, l.email, l.first_name, l.last_name, l.company,
+                  l.status, l.engagement, l.score, l.tags);
+      return "(?, ?, ?, ?, ?, ?, ?, ?, ?)";
+    }).join(",");
 
     await q(
-      `INSERT INTO leads (email, first_name, last_name, company, status, engagement, score, tags)
+      `INSERT INTO leads (user_id, email, first_name, last_name, company, status, engagement, score, tags)
        VALUES ${rowsSql}`,
       values
     );
