@@ -288,21 +288,24 @@ const DashboardHome = () => {
     }
   };
 
+ // In Dashboard.tsx — DashboardHome component
   const fetchOverview = async () => {
     try {
       setError(null);
       setLoading(true);
 
-      const res = await fetch(`${API_BASE}/api/dashboard/overview`, {
-        credentials: "include",
-      });
+      const userId = getCurrentUserId(); // ✅ get userId from localStorage
+
+      const res = await fetch(
+        `${API_BASE}/api/dashboard/overview?userId=${userId}`, // ✅ pass it as query param
+        { credentials: "include" }
+      );
 
       if (!res.ok) throw new Error(`Dashboard API failed with ${res.status}`);
 
       const data: DashboardOverview = await res.json();
       setOverview(data);
 
-      // Keep only for recent campaigns list
       await fetchFromCampaigns();
     } catch (e: any) {
       console.error("Dashboard fetch error:", e);
