@@ -11,138 +11,87 @@ import { Progress } from "@/components/ui/progress";
 import { Eye, Trash2, Save, Send, CheckCircle, AlertCircle, Loader2, RefreshCw } from "lucide-react";
 import CSVUploader from "@/components/CSVUploader";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { useNavigate } from "react-router-dom";
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:3001";
 
-// ─── Types ───────────────────────────────────────────────────────────────────
-
-interface Lead {
-  email: string;
-  name?: string;
-  firstName?: string;
-  lastName?: string;
-  company?: string;
-  [key: string]: any;
-}
-
-interface EmailTemplate {
-  id: number;
-  name: string;
-  subject: string;
+// ─── Follow-up types (matches DB schema) ─────────────────────────────────────
+type FollowUpCondition = "not_opened" | "not_clicked" | "always" | "no_reply";
+type FollowUpStep = {
+  id?: number;
+  followup_order: number;
+  delay_days: number;
+  send_condition: FollowUpCondition;
   content: string;
+};
+const CONDITION_LABELS: Record<FollowUpCondition, string> = {
+  not_opened: "Not Opened", not_clicked: "Not Clicked",
+  always: "Always",         no_reply: "No Reply",
+};
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+interface Lead {
+  email: string; name?: string; firstName?: string; lastName?: string;
+  company?: string; [key: string]: any;
+}
+interface EmailTemplate {
+  id: number; name: string; subject: string; content: string;
   template_type: 'marketing' | 'transactional' | 'newsletter' | 'followup';
   contentType?: 'html' | 'text';
+  followups?: FollowUpStep[];   // from enriched GET response
 }
-
 interface Campaign {
-  id: number;
-  userId: number;
-  name: string;
-  subject: string;
-  template: any;
-  leads: Lead[];
-  status: string;
-  createdAt: string;
-  scheduledAt?: string;
-  settings?: any;
-  followupSettings?: any;
-  sentCount?: number;
-  openedCount?: number;
-  clickedCount?: number;
-  bouncedCount?: number;
-  totalRecipients?: number;
+  id: number; userId: number; name: string; subject: string; template: any;
+  leads: Lead[]; status: string; createdAt: string; scheduledAt?: string;
+  settings?: any; followupSettings?: any;
+  sentCount?: number; openedCount?: number; clickedCount?: number;
+  bouncedCount?: number; totalRecipients?: number;
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function toDbDatetime(localVal: string): string {
-  if (!localVal) return "";
-  return localVal.replace("T", " ") + ":00";
-}
-
-function formatDisplay(dt: string | undefined): string {
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+function toDbDatetime(v: string): string { return v ? v.replace("T", " ") + ":00" : ""; }
+function formatDisplay(dt?: string): string {
   if (!dt) return "-";
   return new Date(dt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
 }
-
 function localDatetimeMin(): string {
   const now = new Date();
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${now.getFullYear()}-${p(now.getMonth()+1)}-${p(now.getDate())}T${p(now.getHours())}:${p(now.getMinutes())}`;
 }
-
-function toNum(v: any): number | null {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : null;
-}
-
+function toNum(v: any): number | null { const n = Number(v); return Number.isFinite(n) ? n : null; }
 function safeJsonParse<T = any>(s: string | null, fallback: T): T {
-  try {
-    return s ? (JSON.parse(s) as T) : fallback;
-  } catch {
-    return fallback;
-  }
+  try { return s ? (JSON.parse(s) as T) : fallback; } catch { return fallback; }
 }
-
-/**
- * ✅ FIX: Case-insensitive field getter for lead objects
- * CSV columns like "Name", "NAME", "name" sab handle karta hai
- */
-function getLeadField(lead: Lead, ...fieldNames: string[]): string {
+function getLeadField(lead: Lead, ...fields: string[]): string {
   if (!lead || typeof lead !== "object") return "";
   const keys = Object.keys(lead);
-  for (const field of fieldNames) {
-    // Exact match first
-    if (typeof lead[field] === "string" && lead[field].trim()) return lead[field].trim();
-    // Case-insensitive match
-    const found = keys.find(k => k.toLowerCase() === field.toLowerCase());
+  for (const f of fields) {
+    if (typeof lead[f] === "string" && lead[f].trim()) return lead[f].trim();
+    const found = keys.find(k => k.toLowerCase() === f.toLowerCase());
     if (found && typeof lead[found] === "string" && lead[found].trim()) return lead[found].trim();
   }
   return "";
 }
-
-/**
- * ✅ FIX: Extract name from lead — handles Name, name, NAME, firstName+lastName
- */
 function extractLeadName(lead: Lead): string {
-  // Try "name" / "Name" / "NAME"
   const name = getLeadField(lead, "name");
   if (name) return name;
-
-  // Try firstName + lastName combo
-  const first = getLeadField(lead, "firstName", "first_name", "First Name", "FirstName");
-  const last = getLeadField(lead, "lastName", "last_name", "Last Name", "LastName");
-  const full = `${first} ${last}`.trim();
-  return full || "-";
+  const first = getLeadField(lead, "firstName", "first_name", "First Name");
+  const last  = getLeadField(lead, "lastName", "last_name", "Last Name");
+  return `${first} ${last}`.trim() || "-";
 }
-
-/**
- * ✅ FIX: Extract email — handles "Email", "email", "EMAIL"
- */
 function extractLeadEmail(lead: Lead): string {
   return getLeadField(lead, "email", "Email", "EMAIL") || lead.email || "";
 }
-
-/**
- * ✅ FIX: Extract company — handles "Company", "company", "COMPANY"
- */
 function extractLeadCompany(lead: Lead): string {
   return getLeadField(lead, "company", "Company", "COMPANY") || "-";
 }
 
-// ─── Component ───────────────────────────────────────────────────────────────
-
+// ─── Component ────────────────────────────────────────────────────────────────
 const CampaignPage = () => {
   const [campaignName, setCampaignName] = useState('');
-  const [emailSubject, setEmailSubject] = useState('');
   const [selectedTemplate, setSelectedTemplate] = useState<EmailTemplate | null>(null);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [isSending, setIsSending] = useState(false);
@@ -155,121 +104,75 @@ const CampaignPage = () => {
   const [successMessage, setSuccessMessage] = useState('');
   const [isLoadingCampaigns, setIsLoadingCampaigns] = useState(false);
   const [showLeadsDialog, setShowLeadsDialog] = useState(false);
-
-  // Campaign settings
   const [timezone, setTimezone] = useState('UTC');
   const [sendingHours, setSendingHours] = useState({ from: '09:00', to: '17:00' });
   const [abTesting, setAbTesting] = useState(false);
   const [delayBetweenEmails, setDelayBetweenEmails] = useState(200);
   const [maxLevel, setMaxLevel] = useState(100);
-
-  // Follow-up settings
   const [followupEnabled, setFollowupEnabled] = useState(false);
-  const [followupTemplate, setFollowupTemplate] = useState<EmailTemplate | null>(null);
-  const [followupSubject, setFollowupSubject] = useState('Follow-up: Your previous email');
-  const [followupDelayHours, setFollowupDelayHours] = useState(0.083);
-  const [followupCondition, setFollowupCondition] = useState<'not_opened' | 'not_clicked' | 'always' | 'no_reply'>('not_opened');
-
-  // Pagination / search
   const [scheduleAt, setScheduleAt] = useState('');
   const [sendingCampaignId, setSendingCampaignId] = useState<number | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [searchQuery, setSearchQuery] = useState('');
   const PAGE_SIZE = 10;
 
-  const getCurrentUserId = () => {
-    const user = safeJsonParse<{ id?: number }>(localStorage.getItem('user'), {});
-    return toNum(user?.id) ?? 1;
-  };
-
-  const userId = getCurrentUserId();
+  const userId = (() => {
+    const u = safeJsonParse<{ id?: number }>(localStorage.getItem('user'), {});
+    return toNum(u?.id) ?? 1;
+  })();
   const navigate = useNavigate();
 
-  // ─── API Calls ──────────────────────────────────────────────────────────────
+  // Follow-up steps from selected template (already in DB format)
+  const templateFollowups: FollowUpStep[] = selectedTemplate?.followups || [];
 
+  // ── API ────────────────────────────────────────────────────────────────────
   const loadEmailTemplates = async () => {
     try {
       const res = await fetch(`${API_BASE_URL}/api/email-templates?userId=${userId}`);
       const data = await res.json();
-      const templatesFromApi = Array.isArray(data.data) ? data.data : data.data?.templates || [];
-      if (templatesFromApi.length === 0) setErrors(["No email templates found in database"]);
-      setTemplates(templatesFromApi);
-      if (!selectedTemplate && templatesFromApi.length > 0) setSelectedTemplate(templatesFromApi[0]);
-    } catch (err) {
-      console.error(err);
-      setErrors(["Failed to load email templates"]);
-    }
+      const list: EmailTemplate[] = Array.isArray(data.data) ? data.data : data.data?.templates || [];
+      if (list.length === 0) setErrors(["No email templates found"]);
+      setTemplates(list);
+      if (!selectedTemplate && list.length > 0) setSelectedTemplate(list[0]);
+    } catch { setErrors(["Failed to load email templates"]); }
   };
-
-  useEffect(() => {
-    loadEmailTemplates();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userId]);
 
   const loadCampaigns = async () => {
-    setIsLoadingCampaigns(true);
-    setErrors([]);
+    setIsLoadingCampaigns(true); setErrors([]);
     try {
-      const response = await fetch(`${API_BASE_URL}/api/campaigns?userId=${userId}`);
-      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-      const data = await response.json();
+      const res = await fetch(`${API_BASE_URL}/api/campaigns?userId=${userId}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
       if (data.success) {
-        const backendCampaigns: Campaign[] = (data.data || [])
-          .map((c: any) => {
-            const idNum = toNum(c.id);
-            if (!idNum) return null;
-            return {
-              id: idNum,
-              userId: toNum(c.userId) ?? userId,
-              name: c.name,
-              subject: c.subject,
-              template: c.template,
-              leads: c.leads || [],
-              status: c.status,
-              createdAt: c.createdAt,
-              scheduledAt: c.scheduledAt,
-              settings: c.settings,
-              followupSettings: c.followupSettings,
-              sentCount: c.sentCount,
-              openedCount: c.openedCount,
-              clickedCount: c.clickedCount,
-              bouncedCount: c.bouncedCount,
-              totalRecipients: c.totalRecipients,
-            } as Campaign;
-          })
-          .filter(Boolean);
-        setCampaigns(backendCampaigns);
-      } else {
-        setErrors([data.message || 'Failed to load campaigns']);
-      }
-    } catch (error) {
-      console.error('Error loading campaigns:', error);
-      setErrors([`Failed to connect to database: ${error instanceof Error ? error.message : 'Unknown error'}`]);
+        setCampaigns((data.data || []).map((c: any) => {
+          const id = toNum(c.id); if (!id) return null;
+          return { id, userId: toNum(c.userId) ?? userId, name: c.name, subject: c.subject,
+            template: c.template, leads: c.leads || [], status: c.status, createdAt: c.createdAt,
+            scheduledAt: c.scheduledAt, settings: c.settings, followupSettings: c.followupSettings,
+            sentCount: c.sentCount, openedCount: c.openedCount, clickedCount: c.clickedCount,
+            bouncedCount: c.bouncedCount, totalRecipients: c.totalRecipients } as Campaign;
+        }).filter(Boolean));
+      } else setErrors([data.message || 'Failed to load campaigns']);
+    } catch (e) {
+      setErrors([`Failed to connect: ${e instanceof Error ? e.message : 'Unknown'}`]);
       setCampaigns([]);
-    } finally {
-      setIsLoadingCampaigns(false);
-    }
+    } finally { setIsLoadingCampaigns(false); }
   };
 
-  useEffect(() => {
-    loadCampaigns();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userId]);
+  useEffect(() => { loadEmailTemplates(); }, [userId]);
+  useEffect(() => { loadCampaigns(); }, [userId]);
 
-  // ─── Handlers ───────────────────────────────────────────────────────────────
-
-  const handleLeadsUploaded = (uploadedLeads: Lead[]) => {
-    setLeads(prevLeads => {
-      const combined = [...prevLeads, ...uploadedLeads];
-      return combined.filter((lead, index, self) =>
-        index === self.findIndex(l => extractLeadEmail(l) === extractLeadEmail(lead))
+  const handleLeadsUploaded = (uploaded: Lead[]) => {
+    setLeads((prev) => {
+      const combined = [...prev, ...uploaded];
+      return combined.filter((l, i, self) =>
+        i === self.findIndex(x => extractLeadEmail(x) === extractLeadEmail(l))
       );
     });
   };
 
   const handleClearAllLeads = () => {
-    setLeads([]);
-    setShowLeadsDialog(false);
+    setLeads([]); setShowLeadsDialog(false);
     setSuccessMessage("All leads cleared");
     setTimeout(() => setSuccessMessage(''), 2500);
   };
@@ -277,146 +180,91 @@ const CampaignPage = () => {
   const handleCreateCampaign = async () => {
     setErrors([]);
     if (!campaignName.trim()) { setErrors(['Campaign name is required']); return; }
-    if (!emailSubject.trim()) { setErrors(['Email subject is required']); return; }
     if (!selectedTemplate) { setErrors(['Please select an email template']); return; }
-    if (leads.length === 0) { setErrors(['Please upload leads before creating a campaign']); return; }
-    if (followupEnabled && !followupTemplate) { setErrors(['Please select a follow-up template when follow-up is enabled']); return; }
-
+    if (!selectedTemplate.subject?.trim()) { setErrors(['Selected template has no subject']); return; }
+    if (leads.length === 0) { setErrors(['Please upload leads']); return; }
     try {
       const campaignData = {
-        userId,
-        name: campaignName,
-        subject: emailSubject,
+        userId, name: campaignName,
+        subject: selectedTemplate.subject,
         templateId: selectedTemplate.id,
         template: selectedTemplate,
         leads,
         runAt: scheduleAt ? toDbDatetime(scheduleAt) : null,
         settings: { timezone, sendingHours, abTesting, delayBetweenEmails, maxLevel },
-        followupSettings: followupEnabled ? {
-          enabled: followupEnabled,
-          templateId: followupTemplate?.id,
-          template: followupTemplate,
-          subject: followupSubject,
-          delayHours: followupDelayHours,
-          condition: followupCondition
-        } : undefined
+        followupSettings: followupEnabled && templateFollowups.length > 0
+          ? { enabled: true, steps: templateFollowups }
+          : undefined,
       };
-
-      const response = await fetch(`${API_BASE_URL}/api/campaigns`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(campaignData)
+      const res = await fetch(`${API_BASE_URL}/api/campaigns`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(campaignData),
       });
-
-      const raw = await response.text();
-      const data = safeJsonParse<any>(raw, null);
-
-      if (!response.ok) throw new Error(data?.message || `HTTP error! status: ${response.status}`);
-
+      const data = safeJsonParse<any>(await res.text(), null);
+      if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`);
       if (data?.success) {
         const newId = toNum(data.campaignId);
-        if (!newId) throw new Error("Campaign created but invalid campaignId returned from API");
-
+        if (!newId) throw new Error("Invalid campaignId returned");
         setCurrentCampaign({
-          id: newId,
-          userId,
-          name: campaignName,
-          subject: emailSubject,
-          template: selectedTemplate,
-          leads,
-          status: scheduleAt ? 'scheduled' : 'draft',
+          id: newId, userId, name: campaignName, subject: selectedTemplate.subject,
+          template: selectedTemplate, leads, status: scheduleAt ? 'scheduled' : 'draft',
           createdAt: new Date().toISOString(),
-          settings: campaignData.settings,
-          followupSettings: campaignData.followupSettings
+          settings: campaignData.settings, followupSettings: campaignData.followupSettings,
         });
-
         await loadCampaigns();
-        setSuccessMessage(
-          scheduleAt
-            ? `Campaign scheduled for ${formatDisplay(toDbDatetime(scheduleAt))}`
-            : 'Campaign saved to database successfully!'
-        );
+        setSuccessMessage(scheduleAt
+          ? `Scheduled for ${formatDisplay(toDbDatetime(scheduleAt))}`
+          : 'Campaign saved successfully!');
         setTimeout(() => setSuccessMessage(''), 4000);
-      } else {
-        setErrors([data?.message || 'Failed to save campaign']);
-      }
-    } catch (error) {
-      console.error('Error creating campaign:', error);
-      setErrors([`Failed to save to database: ${error instanceof Error ? error.message : 'Unknown error'}`]);
+      } else setErrors([data?.message || 'Failed to save campaign']);
+    } catch (e) {
+      setErrors([`Failed to save: ${e instanceof Error ? e.message : 'Unknown'}`]);
     }
   };
 
   const handleSendCampaign = async (campaign: Campaign) => {
+    const safeId = toNum(campaign?.id);
+    if (!safeId) { setErrors(["Invalid campaign ID"]); return; }
+    setSendingCampaignId(safeId); setIsSending(true); setErrors([]);
     try {
-      const safeId = toNum(campaign?.id);
-      if (!safeId) { setErrors([`Invalid campaign ID: ${String(campaign?.id)}`]); return; }
-
-      setSendingCampaignId(safeId);
-      setIsSending(true);
-      setErrors([]);
-
       const res = await fetch(`${API_BASE_URL}/api/campaigns/${safeId}/send`, { method: "POST" });
-      const raw = await res.text();
-      const data = safeJsonParse<any>(raw, null);
-
-      if (!res.ok) throw new Error(data?.message || raw || `Send failed (HTTP ${res.status})`);
+      const data = safeJsonParse<any>(await res.text(), null);
+      if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`);
       if (!data?.success) throw new Error(data?.message || "Send failed");
-
       await loadCampaigns();
-      setSuccessMessage(`Campaign "${campaign.name}" sent successfully (${data.sentCount})`);
+      setSuccessMessage(`Campaign "${campaign.name}" sent (${data.sentCount})`);
       setTimeout(() => setSuccessMessage(''), 4000);
-    } catch (err) {
-      setErrors([err instanceof Error ? err.message : "Send failed"]);
-    } finally {
-      setIsSending(false);
-      setSendingCampaignId(null);
-      setSendingProgress(0);
-    }
+    } catch (e) { setErrors([e instanceof Error ? e.message : "Send failed"]); }
+    finally { setIsSending(false); setSendingCampaignId(null); setSendingProgress(0); }
   };
 
   const handlePreview = () => {
-    if (!selectedTemplate) { setErrors(['Please select an email template to preview']); return; }
-    const dlg = document.getElementById('preview-modal') as HTMLDialogElement | null;
-    if (dlg && typeof dlg.showModal === "function") dlg.showModal();
+    if (!selectedTemplate) { setErrors(['Please select a template']); return; }
+    (document.getElementById('preview-modal') as HTMLDialogElement)?.showModal?.();
   };
 
   const handleDeleteCampaign = async (campaignId: number) => {
-    if (!confirm('Are you sure you want to delete this campaign?')) return;
+    if (!confirm('Delete this campaign?')) return;
     const safeId = toNum(campaignId);
-    if (!safeId) { setErrors([`Invalid campaign ID: ${String(campaignId)}`]); return; }
-
+    if (!safeId) { setErrors(["Invalid ID"]); return; }
     try {
-      const response = await fetch(`${API_BASE_URL}/api/campaigns/${safeId}`, { method: 'DELETE' });
-      const raw = await response.text();
-      const data = safeJsonParse<any>(raw, null);
-      if (!response.ok) throw new Error(data?.message || raw || `Delete failed (HTTP ${response.status})`);
-      if (data?.success) {
-        await loadCampaigns();
-        setSuccessMessage('Campaign deleted');
-        setTimeout(() => setSuccessMessage(''), 3000);
-      } else {
-        setErrors([data?.message || 'Failed to delete campaign']);
-      }
-    } catch (error) {
-      console.error('Delete error:', error);
-      setErrors([`Failed to delete: ${error instanceof Error ? error.message : 'Unknown error'}`]);
-    }
+      const res = await fetch(`${API_BASE_URL}/api/campaigns/${safeId}`, { method: 'DELETE' });
+      const data = safeJsonParse<any>(await res.text(), null);
+      if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`);
+      if (data?.success) { await loadCampaigns(); setSuccessMessage('Deleted'); setTimeout(() => setSuccessMessage(''), 3000); }
+      else setErrors([data?.message || 'Failed']);
+    } catch (e) { setErrors([`Delete failed: ${e instanceof Error ? e.message : 'Unknown'}`]); }
   };
 
-  // ─── Derived State ──────────────────────────────────────────────────────────
-
-  const filteredCampaigns = campaigns.filter(c =>
+  const filtered = campaigns.filter(c =>
     c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     c.subject.toLowerCase().includes(searchQuery.toLowerCase())
   );
-  const paginatedCampaigns = filteredCampaigns.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
-  const totalPages = Math.ceil(filteredCampaigns.length / PAGE_SIZE);
-
-  // ─── Render ─────────────────────────────────────────────────────────────────
+  const paginated = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+  const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
 
   return (
     <>
-      {/* ✅ ONLY CHANGE: header height fixed + centered (no py-4) */}
       <header className="bg-card shadow-sm border-b sticky top-0 z-50 h-16 flex items-center">
         <div className="px-6 w-full flex items-center justify-between">
           <h2 className="text-2xl font-semibold text-foreground">Campaign Management</h2>
@@ -424,10 +272,8 @@ const CampaignPage = () => {
             <Button variant="outline" onClick={handlePreview} disabled={!selectedTemplate}>
               <Eye className="mr-2 h-4 w-4" /> Preview
             </Button>
-            <Button
-              onClick={handleCreateCampaign}
-              disabled={!selectedTemplate || leads.length === 0 || !campaignName.trim()}
-            >
+            <Button onClick={handleCreateCampaign}
+              disabled={!selectedTemplate || leads.length === 0 || !campaignName.trim()}>
               <Save className="mr-2 h-4 w-4" />
               {scheduleAt ? 'Schedule Campaign' : 'Save Campaign'}
             </Button>
@@ -435,31 +281,48 @@ const CampaignPage = () => {
         </div>
       </header>
 
-      {/* ── Preview Modal ─────────────────────────────────────────────────────── */}
+      {/* Preview Modal */}
       <dialog id="preview-modal" className="rounded-lg backdrop:bg-black/30 p-0 w-full max-w-2xl">
         <div className="bg-card rounded-lg p-6">
           <div className="flex justify-between items-center mb-4">
-            <h3 className="text-lg font-semibold text-foreground">Email Preview</h3>
+            <h3 className="text-lg font-semibold">Email Preview</h3>
             <div className="flex gap-2">
               <Button size="sm" variant={previewMode === "desktop" ? "default" : "outline"} onClick={() => setPreviewMode("desktop")}>Desktop</Button>
               <Button size="sm" variant={previewMode === "mobile" ? "default" : "outline"} onClick={() => setPreviewMode("mobile")}>Mobile</Button>
-              <button
-                className="ml-4 text-muted-foreground hover:text-foreground"
-                onClick={() => (document.getElementById('preview-modal') as HTMLDialogElement)?.close()}
-              >✕</button>
+              <button className="ml-4 text-muted-foreground hover:text-foreground"
+                onClick={() => (document.getElementById('preview-modal') as HTMLDialogElement)?.close()}>✕</button>
             </div>
           </div>
           <div className={previewMode === 'mobile' ? 'mx-auto w-80 border rounded-lg p-4 bg-muted' : 'border rounded p-6 bg-muted'}>
             {selectedTemplate ? (
               <>
-                <div className="text-xs text-muted-foreground mb-2">{emailSubject || selectedTemplate.subject}</div>
+                <div className="text-xs text-muted-foreground mb-2 font-medium">
+                  Subject: {selectedTemplate.subject || "(no subject)"}
+                </div>
                 <div className="font-bold mb-2">{selectedTemplate.name}</div>
-                <div className="text-foreground">
+                <div className="text-foreground text-sm">
                   {selectedTemplate.contentType === 'html'
                     ? <div dangerouslySetInnerHTML={{ __html: selectedTemplate.content }} />
-                    : <div style={{ whiteSpace: 'pre-wrap' }}>{selectedTemplate.content}</div>
-                  }
+                    : <div style={{ whiteSpace: 'pre-wrap' }}>{selectedTemplate.content}</div>}
                 </div>
+                {templateFollowups.length > 0 && (
+                  <div className="mt-4 pt-3 border-t border-dashed border-purple-200 space-y-2">
+                    <p className="text-xs font-semibold text-purple-600">
+                      🔁 {templateFollowups.length} Follow-up{templateFollowups.length > 1 ? "s" : ""}:
+                    </p>
+                    {templateFollowups.map((s, i) => (
+                      <div key={i} className="border border-purple-100 rounded p-2 bg-purple-50/50">
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <span className="w-4 h-4 flex-shrink-0 flex items-center justify-center bg-purple-600 text-white rounded-full text-[9px] font-bold">{i + 1}</span>
+                          <span className="text-xs text-purple-700 font-medium">
+                            After {s.delay_days} day{s.delay_days > 1 ? "s" : ""} · {CONDITION_LABELS[s.send_condition]}
+                          </span>
+                        </div>
+                        <p className="text-xs text-gray-500 line-clamp-2 ml-5">{s.content}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </>
             ) : (
               <div className="text-center text-muted-foreground py-8">No template selected</div>
@@ -468,12 +331,9 @@ const CampaignPage = () => {
         </div>
       </dialog>
 
-      {/* ── Show Leads Dialog ─────────────────────────────────────────────────── */}
-      <dialog
-        open={showLeadsDialog}
-        className="rounded-lg backdrop:bg-black/30 p-0 w-full max-w-3xl"
-        onClose={() => setShowLeadsDialog(false)}
-      >
+      {/* Leads Dialog */}
+      <dialog open={showLeadsDialog} className="rounded-lg backdrop:bg-black/30 p-0 w-full max-w-3xl"
+        onClose={() => setShowLeadsDialog(false)}>
         <div className="bg-card rounded-lg p-6">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-lg font-semibold">Uploaded Leads ({leads.length})</h3>
@@ -484,41 +344,29 @@ const CampaignPage = () => {
               </Button>
             </div>
           </div>
-
           <div className="max-h-[60vh] overflow-auto border rounded-md">
             <Table>
               <TableHeader>
-                <TableRow>
-                  <TableHead>#</TableHead>
-                  <TableHead>Email</TableHead>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Company</TableHead>
-                </TableRow>
+                <TableRow><TableHead>#</TableHead><TableHead>Email</TableHead><TableHead>Name</TableHead><TableHead>Company</TableHead></TableRow>
               </TableHeader>
               <TableBody>
-                {leads.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={4} className="text-center text-muted-foreground py-8">
-                      No leads uploaded
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  leads.map((l, i) => (
+                {leads.length === 0
+                  ? <TableRow><TableCell colSpan={4} className="text-center py-8 text-muted-foreground">No leads</TableCell></TableRow>
+                  : leads.map((l, i) => (
                     <TableRow key={`${extractLeadEmail(l)}-${i}`}>
                       <TableCell className="text-muted-foreground text-sm">{i + 1}</TableCell>
                       <TableCell className="font-mono text-sm">{extractLeadEmail(l)}</TableCell>
                       <TableCell>{extractLeadName(l)}</TableCell>
                       <TableCell>{extractLeadCompany(l)}</TableCell>
                     </TableRow>
-                  ))
-                )}
+                  ))}
               </TableBody>
             </Table>
           </div>
         </div>
       </dialog>
 
-      {/* ── Main ──────────────────────────────────────────────────────────────── */}
+      {/* Main */}
       <main className="p-6 h-[calc(100vh-72px)] overflow-y-auto">
         {errors.length > 0 && (
           <Alert variant="destructive" className="mb-6">
@@ -526,19 +374,17 @@ const CampaignPage = () => {
             <AlertDescription>{errors.map((e, i) => <div key={i}>{e}</div>)}</AlertDescription>
           </Alert>
         )}
-
         {successMessage && (
-          <Alert className="mb-6 bg-green-50 border-green-200 dark:bg-green-900/20 dark:border-green-800">
+          <Alert className="mb-6 bg-green-50 border-green-200">
             <CheckCircle className="h-4 w-4 text-green-600" />
-            <AlertDescription className="text-green-800 dark:text-green-200">{successMessage}</AlertDescription>
+            <AlertDescription className="text-green-800">{successMessage}</AlertDescription>
           </Alert>
         )}
-
         {isSending && (
           <Card className="mb-6 border-primary/20 bg-primary/5">
             <CardContent className="p-4">
               <div className="flex justify-between mb-2">
-                <span className="text-sm font-medium text-primary">Sending Campaign...</span>
+                <span className="text-sm font-medium text-primary">Sending...</span>
                 <span className="text-sm text-primary">{sendingProgress}%</span>
               </div>
               <Progress value={sendingProgress} className="h-2" />
@@ -547,31 +393,24 @@ const CampaignPage = () => {
         )}
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* ── Left: Campaign Setup ──────────────────────────────────────────── */}
+          {/* Campaign Setup */}
           <div className="lg:col-span-2 space-y-6">
             <Card>
               <CardHeader><CardTitle>Campaign Setup</CardTitle></CardHeader>
               <CardContent className="space-y-4">
-
                 <div>
                   <Label>Campaign Name *</Label>
-                  <Input placeholder="Enter campaign name" value={campaignName} onChange={e => setCampaignName(e.target.value)} />
-                </div>
-
-                <div>
-                  <Label>Email Subject *</Label>
-                  <Input placeholder="Enter email subject" value={emailSubject} onChange={e => setEmailSubject(e.target.value)} />
+                  <Input placeholder="Enter campaign name" value={campaignName}
+                    onChange={e => setCampaignName(e.target.value)} />
                 </div>
 
                 <div>
                   <Label>Email Template *</Label>
-                  <Select
-                    value={selectedTemplate?.id.toString()}
-                    onValueChange={value => {
-                      const t = templates.find(t => t.id.toString() === value);
-                      if (t) setSelectedTemplate(t);
-                    }}
-                  >
+                  <Select value={selectedTemplate?.id.toString()}
+                    onValueChange={v => {
+                      const t = templates.find(t => t.id.toString() === v);
+                      if (t) { setSelectedTemplate(t); setFollowupEnabled(false); }
+                    }}>
                     <SelectTrigger><SelectValue placeholder="Select template" /></SelectTrigger>
                     <SelectContent>
                       {templates.map(t => (
@@ -579,24 +418,22 @@ const CampaignPage = () => {
                       ))}
                     </SelectContent>
                   </Select>
+                  {selectedTemplate?.subject && (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Subject: <span className="font-medium text-foreground">{selectedTemplate.subject}</span>
+                    </p>
+                  )}
                 </div>
 
                 <div>
                   <Label>Schedule At (optional)</Label>
-                  <Input
-                    type="datetime-local"
-                    value={scheduleAt}
-                    onChange={e => setScheduleAt(e.target.value)}
-                    min={localDatetimeMin()}
-                  />
+                  <Input type="datetime-local" value={scheduleAt}
+                    onChange={e => setScheduleAt(e.target.value)} min={localDatetimeMin()} />
                   <p className="text-xs text-muted-foreground mt-1">
-                    {scheduleAt
-                      ? `Will be sent at ${formatDisplay(toDbDatetime(scheduleAt))}`
-                      : 'Leave empty to save as draft and send manually'}
+                    {scheduleAt ? `Will send at ${formatDisplay(toDbDatetime(scheduleAt))}` : 'Leave empty to save as draft'}
                   </p>
                 </div>
 
-                {/* ── Upload Leads ─────────────────────────────────────────────── */}
                 <div className="space-y-2">
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-2">
@@ -604,23 +441,11 @@ const CampaignPage = () => {
                       <Badge variant="secondary">{leads.length} leads</Badge>
                     </div>
                     <div className="flex items-center gap-2">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => setShowLeadsDialog(true)}
-                        disabled={leads.length === 0}
-                      >
-                        <Eye className="mr-2 h-4 w-4" />
-                        Show Leads
+                      <Button size="sm" variant="outline" onClick={() => setShowLeadsDialog(true)} disabled={leads.length === 0}>
+                        <Eye className="mr-2 h-4 w-4" />Show Leads
                       </Button>
-                      <Button
-                        size="sm"
-                        variant="destructive"
-                        onClick={handleClearAllLeads}
-                        disabled={leads.length === 0}
-                      >
-                        <Trash2 className="mr-2 h-4 w-4" />
-                        Clear All
+                      <Button size="sm" variant="destructive" onClick={handleClearAllLeads} disabled={leads.length === 0}>
+                        <Trash2 className="mr-2 h-4 w-4" />Clear All
                       </Button>
                     </div>
                   </div>
@@ -628,29 +453,25 @@ const CampaignPage = () => {
                 </div>
 
                 {currentCampaign && (
-                  <Card className="bg-green-50 border-green-200 dark:bg-green-900/20 dark:border-green-800">
+                  <Card className="bg-green-50 border-green-200">
                     <CardContent className="p-4 flex justify-between items-center">
                       <div>
-                        <h4 className="font-medium text-green-800 dark:text-green-200">{currentCampaign.name}</h4>
-                        <p className="text-sm text-green-600 dark:text-green-300">
-                          {currentCampaign.leads?.length || 0} leads • {currentCampaign.status}
-                        </p>
+                        <h4 className="font-medium text-green-800">{currentCampaign.name}</h4>
+                        <p className="text-sm text-green-600">{currentCampaign.leads?.length || 0} leads · {currentCampaign.status}</p>
                       </div>
                       <Badge>{currentCampaign.status}</Badge>
                     </CardContent>
                   </Card>
                 )}
-
               </CardContent>
             </Card>
           </div>
 
-          {/* ── Right: Settings ───────────────────────────────────────────────── */}
+          {/* Settings */}
           <div className="space-y-6">
             <Card>
               <CardHeader><CardTitle>Settings</CardTitle></CardHeader>
               <CardContent className="space-y-4">
-
                 <div className="space-y-2">
                   <Label>Time Zone</Label>
                   <Select value={timezone} onValueChange={setTimezone}>
@@ -668,14 +489,10 @@ const CampaignPage = () => {
                 <div className="space-y-2">
                   <Label>Sending Hours</Label>
                   <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <Label className="text-sm">From</Label>
-                      <Input type="time" value={sendingHours.from} onChange={e => setSendingHours(p => ({ ...p, from: e.target.value }))} />
-                    </div>
-                    <div>
-                      <Label className="text-sm">To</Label>
-                      <Input type="time" value={sendingHours.to} onChange={e => setSendingHours(p => ({ ...p, to: e.target.value }))} />
-                    </div>
+                    <div><Label className="text-sm">From</Label>
+                      <Input type="time" value={sendingHours.from} onChange={e => setSendingHours(p => ({ ...p, from: e.target.value }))} /></div>
+                    <div><Label className="text-sm">To</Label>
+                      <Input type="time" value={sendingHours.to} onChange={e => setSendingHours(p => ({ ...p, to: e.target.value }))} /></div>
                   </div>
                 </div>
 
@@ -686,107 +503,98 @@ const CampaignPage = () => {
 
                 <div className="space-y-2">
                   <Label>Delay Between Emails (ms)</Label>
-                  <Input type="number" value={delayBetweenEmails} onChange={e => setDelayBetweenEmails(parseInt(e.target.value) || 200)} min="100" max="5000" />
+                  <Input type="number" value={delayBetweenEmails}
+                    onChange={e => setDelayBetweenEmails(parseInt(e.target.value) || 200)}
+                    min="100" max="5000" />
                 </div>
 
                 <div className="space-y-2">
                   <Label>Max Level (Per Sender)</Label>
-                  <Input type="number" value={maxLevel} onChange={e => setMaxLevel(parseInt(e.target.value) || 100)} min="1" max="1000" placeholder="Emails per sender per round" />
-                  <p className="text-xs text-muted-foreground">Maximum number of emails to send per sender in each round</p>
+                  <Input type="number" value={maxLevel}
+                    onChange={e => setMaxLevel(parseInt(e.target.value) || 100)}
+                    min="1" max="1000" />
+                  <p className="text-xs text-muted-foreground">Max emails per sender per round</p>
                 </div>
 
-                {/* ── Follow-up ─────────────────────────────────────────────────── */}
-                <div className="space-y-4 pt-4 border-t">
+                {/* ── Follow-up Toggle ──────────────────────────────────── */}
+                <div className="pt-4 border-t space-y-3">
                   <div className="flex items-center justify-between">
-                    <Label>Follow-up Email</Label>
-                    <Switch checked={followupEnabled} onCheckedChange={setFollowupEnabled} />
+                    <div>
+                      <Label className="text-sm font-semibold">Follow-up Emails</Label>
+                      <p className="text-xs text-muted-foreground mt-0.5">Use sequence from template</p>
+                    </div>
+                    <Switch
+                      checked={followupEnabled}
+                      onCheckedChange={setFollowupEnabled}
+                      disabled={templateFollowups.length === 0}
+                    />
                   </div>
 
-                  {followupEnabled && (
-                    <div className="space-y-4">
-                      <div>
-                        <Label>Follow-up Template</Label>
-                        <Select
-                          value={followupTemplate?.id ? String(followupTemplate.id) : undefined}
-                          onValueChange={value => {
-                            const t = templates.find(t => t.id.toString() === value);
-                            if (t) setFollowupTemplate(t);
-                          }}
-                        >
-                          <SelectTrigger><SelectValue placeholder="Select follow-up template" /></SelectTrigger>
-                          <SelectContent>
-                            {templates.map(t => (
-                              <SelectItem key={t.id} value={t.id.toString()}>{t.name}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-
-                      <div>
-                        <Label>Follow-up Subject</Label>
-                        <Input value={followupSubject} onChange={e => setFollowupSubject(e.target.value)} />
-                      </div>
-
-                      <div>
-                        <Label>Send After (hours)</Label>
-                        <Input type="number" step="0.01" value={followupDelayHours} onChange={e => setFollowupDelayHours(parseFloat(e.target.value) || 0.083)} min="0.01" max="168" />
-                      </div>
-
-                      <div>
-                        <Label>Send If</Label>
-                        <Select value={followupCondition} onValueChange={v => setFollowupCondition(v as any)}>
-                          <SelectTrigger><SelectValue /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="not_opened">Original email not opened</SelectItem>
-                            <SelectItem value="not_clicked">Original email not clicked</SelectItem>
-                            <SelectItem value="always">Always send follow-up</SelectItem>
-                            <SelectItem value="no_reply">No reply received</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
+                  {templateFollowups.length === 0 ? (
+                    <div className="px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-lg">
+                      <p className="text-xs text-amber-700">
+                        ⚠️ No follow-ups in this template.
+                        <br />
+                        <span className="font-medium">Email Templates → Editor → Follow-up Sequence</span>
+                      </p>
+                    </div>
+                  ) : followupEnabled ? (
+                    <div className="px-3 py-2.5 bg-purple-50 border border-purple-200 rounded-lg space-y-2">
+                      <p className="text-xs font-semibold text-purple-700">
+                        🔁 {templateFollowups.length} step{templateFollowups.length > 1 ? "s" : ""} will run:
+                      </p>
+                      {templateFollowups.map((s, i) => (
+                        <div key={i} className="flex items-center gap-1.5 text-xs">
+                          <span className="w-4 h-4 flex-shrink-0 flex items-center justify-center bg-purple-200 text-purple-800 rounded-full text-[9px] font-bold">{i + 1}</span>
+                          <span className="text-purple-600">After {s.delay_days} day{s.delay_days > 1 ? "s" : ""}</span>
+                          <span className="px-1.5 py-0.5 bg-purple-100 text-purple-600 rounded text-[9px]">
+                            {CONDITION_LABELS[s.send_condition]}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg">
+                      <p className="text-xs text-gray-500">
+                        ✅ {templateFollowups.length} follow-up{templateFollowups.length > 1 ? "s" : ""} ready. Toggle on to enable.
+                      </p>
                     </div>
                   )}
                 </div>
-
               </CardContent>
             </Card>
           </div>
         </div>
 
-        {/* ── Campaign Table ────────────────────────────────────────────────────── */}
+        {/* Campaign Table */}
         <div className="mt-6">
           <Card className="overflow-hidden">
             <CardHeader className="flex flex-row items-center justify-between sticky top-0 z-40 bg-card">
               <CardTitle>Database Campaigns</CardTitle>
               <div className="flex gap-2">
-                <Input
-                  placeholder="Search campaigns..."
-                  value={searchQuery}
+                <Input placeholder="Search campaigns..." value={searchQuery}
                   onChange={e => { setSearchQuery(e.target.value); setCurrentPage(1); }}
-                  className="w-64"
-                />
+                  className="w-64" />
                 <Button size="sm" variant="outline" onClick={loadCampaigns} disabled={isLoadingCampaigns}>
                   <RefreshCw className={`h-4 w-4 mr-2 ${isLoadingCampaigns ? "animate-spin" : ""}`} /> Reload
                 </Button>
               </div>
             </CardHeader>
-
             <CardContent>
               {isLoadingCampaigns ? (
                 <div className="text-center py-10">
                   <Loader2 className="h-8 w-8 animate-spin mx-auto mb-2" />
-                  <p className="text-muted-foreground">Loading from database...</p>
+                  <p className="text-muted-foreground">Loading...</p>
                 </div>
               ) : campaigns.length === 0 ? (
-                <div className="text-center py-10 text-muted-foreground">No campaigns in database</div>
+                <div className="text-center py-10 text-muted-foreground">No campaigns</div>
               ) : (
                 <div className="space-y-4">
                   <div className="overflow-x-auto max-h-[60vh] overflow-y-auto">
                     <Table>
                       <TableHeader className="sticky top-0 z-30 bg-card">
                         <TableRow>
-                          <TableHead>Campaign</TableHead>
-                          <TableHead>Status</TableHead>
+                          <TableHead>Campaign</TableHead><TableHead>Status</TableHead>
                           <TableHead>Scheduled At</TableHead>
                           <TableHead className="text-center">Recipients</TableHead>
                           <TableHead className="text-center">Sent</TableHead>
@@ -796,9 +604,8 @@ const CampaignPage = () => {
                           <TableHead className="w-32">Actions</TableHead>
                         </TableRow>
                       </TableHeader>
-
                       <TableBody>
-                        {paginatedCampaigns.map(c => (
+                        {paginated.map(c => (
                           <TableRow key={c.id}>
                             <TableCell>
                               <p className="font-medium">{c.name}</p>
@@ -809,15 +616,12 @@ const CampaignPage = () => {
                                 c.status === 'sent' ? 'default' :
                                 c.status === 'scheduled' ? 'secondary' :
                                 c.status === 'sending' ? 'destructive' : 'outline'
-                              }>
-                                {c.status}
-                              </Badge>
+                              }>{c.status}</Badge>
                             </TableCell>
                             <TableCell>
                               {c.scheduledAt
                                 ? <span className="text-sm">{formatDisplay(c.scheduledAt)}</span>
-                                : <span className="text-muted-foreground text-sm">-</span>
-                              }
+                                : <span className="text-muted-foreground text-sm">-</span>}
                             </TableCell>
                             <TableCell className="text-center">{c.totalRecipients ?? c.leads?.length ?? 0}</TableCell>
                             <TableCell className="text-center">{c.sentCount ?? 0}</TableCell>
@@ -827,24 +631,22 @@ const CampaignPage = () => {
                             <TableCell>
                               <div className="flex items-center gap-1">
                                 {(c.status === 'draft' || c.status === 'scheduled') && (
-                                  <Button
-                                    size="sm"
-                                    variant="ghost"
+                                  <Button size="sm" variant="ghost"
                                     onClick={() => handleSendCampaign(c)}
                                     disabled={isSending && sendingCampaignId === c.id}
-                                    title="Send now"
-                                    className="text-primary hover:text-primary"
-                                  >
+                                    className="text-primary hover:text-primary">
                                     {isSending && sendingCampaignId === c.id
                                       ? <Loader2 className="h-4 w-4 animate-spin" />
-                                      : <Send className="h-4 w-4" />
-                                    }
+                                      : <Send className="h-4 w-4" />}
                                   </Button>
                                 )}
-                                <Button size="sm" variant="ghost" onClick={() => navigate(`/dashboard/campaign-result/${c.id}`)} title="View results">
+                                <Button size="sm" variant="ghost"
+                                  onClick={() => navigate(`/dashboard/campaign-result/${c.id}`)}>
                                   <Eye className="h-4 w-4" />
                                 </Button>
-                                <Button size="sm" variant="ghost" onClick={() => handleDeleteCampaign(c.id)} disabled={c.status === "sending"} title="Delete">
+                                <Button size="sm" variant="ghost"
+                                  onClick={() => handleDeleteCampaign(c.id)}
+                                  disabled={c.status === "sending"}>
                                   <Trash2 className="h-4 w-4 text-destructive" />
                                 </Button>
                               </div>
@@ -854,22 +656,18 @@ const CampaignPage = () => {
                       </TableBody>
                     </Table>
                   </div>
-
                   {totalPages > 1 && (
                     <div className="flex items-center justify-between pt-4 border-t">
                       <div className="text-sm text-muted-foreground">
-                        Showing {((currentPage - 1) * PAGE_SIZE) + 1} to {Math.min(currentPage * PAGE_SIZE, filteredCampaigns.length)} of {filteredCampaigns.length} campaigns
+                        Showing {((currentPage-1)*PAGE_SIZE)+1}–{Math.min(currentPage*PAGE_SIZE, filtered.length)} of {filtered.length}
                       </div>
                       <div className="flex gap-2">
-                        <Button size="sm" variant="outline" onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1}>Previous</Button>
-                        <div className="flex items-center gap-1">
-                          {Array.from({ length: totalPages }, (_, i) => i + 1).map(page => (
-                            <Button key={page} size="sm" variant={currentPage === page ? 'default' : 'outline'} onClick={() => setCurrentPage(page)} className="min-w-10">
-                              {page}
-                            </Button>
-                          ))}
-                        </div>
-                        <Button size="sm" variant="outline" onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages}>Next</Button>
+                        <Button size="sm" variant="outline" onClick={() => setCurrentPage(p => Math.max(1, p-1))} disabled={currentPage === 1}>Previous</Button>
+                        {Array.from({ length: totalPages }, (_, i) => i+1).map(page => (
+                          <Button key={page} size="sm" variant={currentPage === page ? 'default' : 'outline'}
+                            onClick={() => setCurrentPage(page)} className="min-w-10">{page}</Button>
+                        ))}
+                        <Button size="sm" variant="outline" onClick={() => setCurrentPage(p => Math.min(totalPages, p+1))} disabled={currentPage === totalPages}>Next</Button>
                       </div>
                     </div>
                   )}

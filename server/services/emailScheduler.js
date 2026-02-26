@@ -30,7 +30,7 @@ class EmailScheduler {
     });
   }
 
-  pause() { this.isPaused = true; console.log("⏸️ Scheduler paused"); }
+  pause()  { this.isPaused = true;  console.log("⏸️ Scheduler paused");  }
   resume() { this.isPaused = false; console.log("▶️ Scheduler resumed"); }
 
   stop() {
@@ -50,31 +50,37 @@ class EmailScheduler {
     return String(email || "").trim().toLowerCase();
   }
 
-  // ✅ FIX: signature parameter add kiya — account.signature yahan aayegi
+  /**
+   * ✅ Merge ALL placeholders: {Name}, {Company}, {{name}}, {Signature} etc.
+   */
   mergePlaceholders(content, lead, signature = "") {
     let out = content;
 
-    const name = lead.name || "";
-    const email = lead.email || "";
-    const payload = lead.payload
-      ? typeof lead.payload === "string"
-        ? JSON.parse(lead.payload)
-        : lead.payload
-      : {};
+    let payloadObj = {};
+    try {
+      payloadObj = lead.payload
+        ? typeof lead.payload === "string"
+          ? JSON.parse(lead.payload)
+          : lead.payload
+        : {};
+    } catch (_) {
+      payloadObj = {};
+    }
 
-    // ✅ Signature: newlines ko <br> mein convert karo (HTML email ke liye)
+    const name  = lead.name  || payloadObj.name  || payloadObj.Name  || "";
+    const email = lead.email || payloadObj.email || payloadObj.Email || "";
     const sigHtml = signature ? String(signature).replace(/\n/g, "<br>") : "";
 
     const allFields = {
-      name, email,
-      Name: name, Email: email,
-      Signature: sigHtml,   // ✅ {Signature} replace hoga
-      signature: sigHtml,   // ✅ {signature} bhi (case-insensitive backup)
-      ...payload,
+      name,      Name: name,
+      email,     Email: email,
+      Signature: sigHtml,
+      signature: sigHtml,
+      ...payloadObj,
     };
 
     for (const [key, value] of Object.entries(allFields)) {
-      const safe = String(value || "");
+      const safe = String(value ?? "");
       out = out.replace(new RegExp(`\\{\\{\\s*${key}\\s*\\}\\}`, "gi"), safe);
       out = out.replace(new RegExp(`\\{\\s*${key}\\s*\\}`, "gi"), safe);
     }
@@ -84,6 +90,58 @@ class EmailScheduler {
 
   getAppUrl() {
     return process.env.APP_URL || "http://localhost:3001";
+  }
+
+  // ✅ Schedule a follow-up into followup_queue with proper datetime
+  async scheduleFollowup(conn, { campaign, lead }) {
+    try {
+      if (
+        !campaign.has_followup ||
+        !campaign.followup_template_id ||
+        campaign.followup_delay_hours == null
+      ) return;
+
+      const delayHours  = parseFloat(campaign.followup_delay_hours) || 0;
+      const delayMs     = Math.round(delayHours * 60 * 60 * 1000);
+
+      // ✅ scheduled_at = NOW() + delayHours (stored as MySQL datetime)
+      const scheduledAt = new Date(Date.now() + delayMs);
+
+      // MySQL datetime format: YYYY-MM-DD HH:MM:SS
+      const toMySQLDatetime = (d) => {
+        const pad = (n) => String(n).padStart(2, "0");
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
+               `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+      };
+
+      const scheduledAtStr = toMySQLDatetime(scheduledAt);
+
+      await conn.query(
+        `INSERT INTO followup_queue
+           (campaign_id, user_id, email,
+            followup_template_id, followup_subject,
+            scheduled_at, \`condition\`, status,
+            created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', NOW(), NOW())`,
+        [
+          campaign.id,
+          campaign.user_id,
+          lead.email,
+          campaign.followup_template_id,
+          campaign.followup_subject || null,
+          scheduledAtStr,
+          campaign.followup_condition || "not_opened",
+        ]
+      );
+
+      console.log(
+        `📅 Follow-up scheduled → ${lead.email} at ${scheduledAtStr} ` +
+        `(+${delayHours}h, condition: ${campaign.followup_condition || "not_opened"})`
+      );
+    } catch (err) {
+      // Don't crash the main send loop if followup scheduling fails
+      console.error(`⚠️ Failed to schedule follow-up for ${lead.email}:`, err.message);
+    }
   }
 
   async checkAndSendScheduledCampaigns() {
@@ -127,14 +185,14 @@ class EmailScheduler {
       `SELECT
          id,
          from_name,
-         from_email AS email,
+         from_email    AS email,
          smtp_username AS smtp_user,
          smtp_password AS app_password,
          smtp_host,
          smtp_port,
          smtp_security,
          daily_limit,
-         signature         -- ✅ signature bhi fetch karo
+         signature
        FROM user_email_accounts
        WHERE user_id = ?`,
       [userId]
@@ -154,13 +212,13 @@ class EmailScheduler {
         [account.email]
       );
 
-      const sentCount = sentToday[0]?.sent_count || 0;
+      const sentCount  = sentToday[0]?.sent_count || 0;
       const dailyLimit = Number(account.daily_limit || 0);
-      const remaining = Math.max(0, dailyLimit - sentCount);
+      const remaining  = Math.max(0, dailyLimit - sentCount);
 
       accountsWithCapacity.push({
         ...account,
-        sentToday: sentCount,
+        sentToday:      sentCount,
         remainingToday: remaining,
       });
     }
@@ -191,7 +249,7 @@ class EmailScheduler {
       `📊 Batch size: ${batchSize} (${emailAccounts.length} accounts × ${maxLevel} max_level)`
     );
 
-    let leadIndex = 0;
+    let leadIndex    = 0;
     let accountIndex = 0;
 
     while (leadIndex < batchSize && leadIndex < leads.length) {
@@ -242,10 +300,17 @@ class EmailScheduler {
     console.log(`\n📧 Campaign: "${campaign.name}" (id: ${campaign.id})`);
 
     const maxLevel = campaign.max_level || 100;
-    const delayMs = campaign.delay_ms || 200;
+    const delayMs  = campaign.delay_ms  || 200;
 
     console.log(`⚙️ Settings: max_level=${maxLevel}, delay_ms=${delayMs}ms`);
+    if (campaign.has_followup) {
+      console.log(
+        `📬 Follow-up: enabled | template_id=${campaign.followup_template_id} | ` +
+        `delay=${campaign.followup_delay_hours}h | condition=${campaign.followup_condition}`
+      );
+    }
 
+    // ✅ Mark unsubscribed leads before sending
     const [unsubMarkResult] = await conn.query(
       `UPDATE campaign_data cd
        JOIN unsubscribes u
@@ -264,21 +329,24 @@ class EmailScheduler {
       [campaign.user_id, campaign.id]
     );
 
-    console.log(`🚫 Marked ${unsubMarkResult.affectedRows || 0} leads as unsubscribed before sending`);
+    console.log(`🚫 Marked ${unsubMarkResult.affectedRows || 0} leads as unsubscribed`);
 
-    let totalSent = 0;
-    let totalFailed = 0;
-    let batchNumber = 0;
+    let totalSent      = 0;
+    let totalFailed    = 0;
+    let totalFollowups = 0;
+    let batchNumber    = 0;
 
     try {
+      // ✅ Fetch fresh subject + content from email_templates
       const [templates] = await conn.query(
-        `SELECT content FROM email_templates WHERE id = ?`,
+        `SELECT subject, content FROM email_templates WHERE id = ?`,
         [campaign.template_id]
       );
 
-      const templateContent = templates?.[0]?.content || "";
-      if (!templateContent) {
-        console.error("❌ No template content found");
+      const templateRow = templates?.[0];
+
+      if (!templateRow || !templateRow.content) {
+        console.error("❌ No template found for id:", campaign.template_id);
         await conn.query(
           `UPDATE email_campaigns SET status = 'failed', updated_at = NOW() WHERE id = ?`,
           [campaign.id]
@@ -286,11 +354,26 @@ class EmailScheduler {
         return;
       }
 
+      const templateContent = templateRow.content;
+      const emailSubject    = String(templateRow.subject?.trim() || campaign.subject || "");
+
+      if (!emailSubject) {
+        console.error("❌ No subject in template or campaign");
+        await conn.query(
+          `UPDATE email_campaigns SET status = 'failed', updated_at = NOW() WHERE id = ?`,
+          [campaign.id]
+        );
+        return;
+      }
+
+      console.log(`📝 Subject: "${emailSubject}"`);
+
       await conn.query(
-        `UPDATE email_campaigns SET status = 'sending', updated_at = NOW() WHERE id = ?`,
-        [campaign.id]
+        `UPDATE email_campaigns SET subject = ?, status = 'sending', updated_at = NOW() WHERE id = ?`,
+        [emailSubject, campaign.id]
       );
 
+      // ─── Batch sending loop ─────────────────────────────────────────────
       while (true) {
         batchNumber++;
         console.log(`\n🔄 === BATCH ${batchNumber} ===`);
@@ -308,7 +391,7 @@ class EmailScheduler {
           break;
         }
 
-        console.log(`📬 Pending leads in stack: ${leads.length}`);
+        console.log(`📬 Pending leads: ${leads.length}`);
 
         const emailAccounts = await this.getEmailAccountCapacity(conn, campaign.user_id);
         if (!emailAccounts.length) {
@@ -341,56 +424,55 @@ class EmailScheduler {
 
         console.log(`🎯 Sending batch ${batchNumber} (${distribution.length} emails)...`);
 
-        let batchSent = 0;
+        let batchSent   = 0;
         let batchFailed = 0;
-        const appUrl = this.getAppUrl();
+        const appUrl    = this.getAppUrl();
 
         for (const item of distribution) {
           const { lead, account } = item;
-          const leadEmailNorm = this.normalizeEmail(lead.email);
-          const transporter = createTransporter(account);
+          const leadEmailNorm     = this.normalizeEmail(lead.email);
+          const transporter       = createTransporter(account);
 
           try {
-            // ✅ FIX: account.signature pass karo — {Signature} replace hoga
             let emailContent = this.mergePlaceholders(
               templateContent,
               lead,
-              account.signature || ""   // ← yahan signature inject ho rahi hai
+              account.signature || ""
             );
 
-            const trackingPixel = `<img src="${appUrl}/api/track/open?cid=${campaign.id}&email=${encodeURIComponent(
-              lead.email
-            )}&t=${Date.now()}" width="1" height="1" style="display:none" />`;
-            emailContent += trackingPixel;
+            // Tracking pixel
+            emailContent += `<img src="${appUrl}/api/track/open?cid=${campaign.id}&email=${encodeURIComponent(lead.email)}&t=${Date.now()}" width="1" height="1" style="display:none" />`;
 
+            // Unsubscribe link
             const token = sign({
-              email: leadEmailNorm,
-              userId: campaign.user_id,
+              email:      leadEmailNorm,
+              userId:     campaign.user_id,
               campaignId: campaign.id,
-              scope: "all",
-              exp: Date.now() + 365 * 24 * 60 * 60 * 1000,
+              scope:      "all",
+              exp:        Date.now() + 365 * 24 * 60 * 60 * 1000,
             });
 
             const unsubUrl = `${appUrl}/unsubscribe?token=${encodeURIComponent(token)}`;
 
             emailContent += `
               <hr/>
-              <p style="font-size:12px;color:#666">
+              <p style="font-size:12px;color:#666;font-family:sans-serif;">
                 Don't want these emails?
                 <a href="${unsubUrl}">Unsubscribe</a>
               </p>`;
 
             await transporter.sendMail({
-              from: `"${account.from_name || "Campaign"}" <${account.email}>`,
-              to: lead.email,
-              subject: campaign.subject,
-              html: emailContent,
+              from:    `"${account.from_name || "Campaign"}" <${account.email}>`,
+              to:      lead.email,
+              subject: emailSubject,
+              html:    emailContent,
               headers: {
-                "List-Unsubscribe": `<${unsubUrl}>`,
+                "List-Unsubscribe":      `<${unsubUrl}>`,
                 "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
               },
             });
 
+            // ✅ Mark as sent
             await conn.query(
               `UPDATE campaign_data
                SET status = 'sent', sent_at = NOW(), sent_from_email = ?
@@ -401,6 +483,12 @@ class EmailScheduler {
             batchSent++;
             totalSent++;
             console.log(`✅ [${batchSent}/${distribution.length}] ${lead.email} ← ${account.email}`);
+
+            // ✅ Schedule follow-up (with scheduled_at + sent_at datetime)
+            if (campaign.has_followup) {
+              await this.scheduleFollowup(conn, { campaign, lead });
+              totalFollowups++;
+            }
 
             await this.delay(delayMs);
           } catch (err) {
@@ -424,11 +512,11 @@ class EmailScheduler {
 
         await conn.query(
           `UPDATE email_campaigns
-           SET sent_count = ?,
-               failed_count = ?,
+           SET sent_count         = ?,
+               failed_count       = ?,
                unsubscribed_count = ?,
-               status = 'sending',
-               updated_at = NOW()
+               status             = 'sending',
+               updated_at         = NOW()
            WHERE id = ?`,
           [totalSent, totalFailed, batchUnsubCount, campaign.id]
         );
@@ -443,38 +531,39 @@ class EmailScheduler {
         );
 
         if ((remaining[0]?.count || 0) > 0) {
-          console.log(
-            `⏳ ${remaining[0].count} leads remaining - waiting ${delayMs}ms before next batch...`
-          );
+          console.log(`⏳ ${remaining[0].count} leads remaining - next batch in ${delayMs}ms...`);
           await this.delay(delayMs);
         } else {
           console.log("✅ Stack empty - All emails sent!");
           break;
         }
       }
+      // ─── End batch loop ────────────────────────────────────────────────
 
       const finalUnsubCount = await this.getUnsubscribedCount(conn, campaign.id);
 
       await conn.query(
         `UPDATE email_campaigns
-         SET status = 'sent',
-             sent_count = ?,
-             failed_count = ?,
+         SET status             = 'sent',
+             sent_count         = ?,
+             failed_count       = ?,
              unsubscribed_count = ?,
-             completed_at = NOW(),
-             updated_at = NOW()
+             completed_at       = NOW(),
+             updated_at         = NOW()
          WHERE id = ?`,
         [totalSent, totalFailed, finalUnsubCount, campaign.id]
       );
 
       console.log(`\n🏁 CAMPAIGN COMPLETE!`);
-      console.log(`📊 Total Batches: ${batchNumber}`);
-      console.log(`📧 Total Sent: ${totalSent}`);
-      console.log(`❌ Total Failed: ${totalFailed}`);
+      console.log(`📊 Total Batches:      ${batchNumber}`);
+      console.log(`📧 Total Sent:         ${totalSent}`);
+      console.log(`❌ Total Failed:       ${totalFailed}`);
       console.log(`🚫 Total Unsubscribed: ${finalUnsubCount}`);
+      console.log(`📅 Follow-ups Queued:  ${totalFollowups}`);
 
-      this.stats.totalSent += totalSent;
+      this.stats.totalSent   += totalSent;
       this.stats.totalFailed += totalFailed;
+
     } catch (err) {
       console.error("❌ sendCampaign crash:", err);
       await conn.query(
@@ -492,8 +581,8 @@ class EmailScheduler {
     return {
       ...this.stats,
       isProcessing: this.isProcessing,
-      isPaused: this.isPaused,
-      isRunning: this.cronJob !== null,
+      isPaused:     this.isPaused,
+      isRunning:    this.cronJob !== null,
     };
   }
 }
