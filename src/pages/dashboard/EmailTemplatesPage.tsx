@@ -738,13 +738,6 @@ const EmailTemplatesPage = () => {
                             }
                           />
                         )}
-
-                        {sigEnabled && (
-                          <p className="text-xs text-blue-600 bg-blue-50 border border-blue-200 rounded px-3 py-2">
-                            ✍️ <strong>{"{Signature}"}</strong> footer HTML mein add
-                            ho gaya — save hote waqt DB mein bhi jayega.
-                          </p>
-                        )}
                       </div>
 
                       <div className="flex justify-between">

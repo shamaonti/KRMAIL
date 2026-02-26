@@ -38,7 +38,7 @@ router.get("/inbox/:userId", async (req, res) => {
     );
 
     const grouped = {};
-    rows.forEach(mail => {
+    rows.forEach((mail) => {
       if (!grouped[mail.account_email]) grouped[mail.account_email] = [];
       grouped[mail.account_email].push(mail);
     });
@@ -61,7 +61,14 @@ router.post("/reply/:userId", async (req, res) => {
   if (!Number.isInteger(userId) || !Number.isInteger(inboxEmailId)) {
     return res.status(400).json({
       success: false,
-      message: "Invalid userId or inboxEmailId"
+      message: "Invalid userId or inboxEmailId",
+    });
+  }
+
+  if (!to || !subject || !message) {
+    return res.status(400).json({
+      success: false,
+      message: "Missing to/subject/message",
     });
   }
 
@@ -72,22 +79,34 @@ router.post("/reply/:userId", async (req, res) => {
     );
 
     if (!mailRow) {
-      return res.status(404).json({ success: false, message: "Inbox email not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Inbox email not found" });
     }
 
-    const emailAccount = await getEmailAccountByAddress(userId, mailRow.account_email);
+    const emailAccount = await getEmailAccountByAddress(
+      userId,
+      mailRow.account_email
+    );
 
     if (!emailAccount) {
-      return res.status(400).json({ success: false, message: "Email account config not found" });
+      return res
+        .status(400)
+        .json({ success: false, message: "Email account config not found" });
     }
 
     const transporter = createTransporter(emailAccount);
 
+    // IMPORTANT: Many SMTP servers require FROM to match authenticated user
+    const smtpUser = emailAccount.smtp_user || emailAccount.email;
+
     await transporter.sendMail({
-      from: mailRow.account_email,
+      from: smtpUser,
       to,
       subject,
-      html: message
+      html: message,
+      text: stripHtml(message),
+      replyTo: smtpUser,
     });
 
     await db.query(
@@ -96,15 +115,21 @@ router.post("/reply/:userId", async (req, res) => {
       (inbox_email_id, user_id, from_email, to_email, subject, message, sent_at)
       VALUES (?, ?, ?, ?, ?, ?, NOW())
       `,
-      [inboxEmailId, userId, mailRow.account_email, to, subject, message]
+      [inboxEmailId, userId, smtpUser, to, subject, message]
     );
 
     res.json({ success: true, message: "Reply sent & stored" });
   } catch (err) {
     console.error("REPLY ERROR:", err);
-    res.status(500).json({ success: false });
+    res.status(500).json({
+      success: false,
+      message: err?.message || "Failed to send reply",
+    });
   }
 });
 
+function stripHtml(html = "") {
+  return String(html).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+}
+
 module.exports = router;
-  
