@@ -35,75 +35,94 @@ function normEmail(email) {
   return String(email || "").trim().toLowerCase();
 }
 
-/**
- * ✅ FIX: Case-insensitive name extraction from lead object
- * CSV columns can be "Name", "name", "NAME", "firstName", "FirstName" etc.
- */
 function extractName(lead) {
   if (!lead || typeof lead !== "object") return null;
-
-  // Direct lowercase match first
   if (typeof lead.name === "string" && lead.name.trim()) return lead.name.trim();
-
-  // Case-insensitive key search
   const keys = Object.keys(lead);
-
-  // Try "Name", "NAME", etc.
   const nameKey = keys.find(k => k.toLowerCase() === "name");
   if (nameKey && typeof lead[nameKey] === "string" && lead[nameKey].trim()) {
     return lead[nameKey].trim();
   }
-
-  // Try firstName + lastName combination
   const firstKey = keys.find(k => k.toLowerCase() === "firstname" || k.toLowerCase() === "first_name");
   const lastKey = keys.find(k => k.toLowerCase() === "lastname" || k.toLowerCase() === "last_name");
-
   const first = firstKey ? String(lead[firstKey] || "").trim() : "";
   const last = lastKey ? String(lead[lastKey] || "").trim() : "";
   const full = `${first} ${last}`.trim();
   if (full) return full;
-
   return null;
 }
 
-/**
- * ✅ FIX: Case-insensitive email extraction
- */
 function extractEmail(lead) {
   if (!lead || typeof lead !== "object") return null;
-
   if (typeof lead.email === "string" && lead.email.trim()) return lead.email.trim();
-
   const keys = Object.keys(lead);
   const emailKey = keys.find(k => k.toLowerCase() === "email");
   if (emailKey && typeof lead[emailKey] === "string" && lead[emailKey].trim()) {
     return lead[emailKey].trim();
   }
-
   return null;
 }
 
-/**
- * Normalize followupSettings from different possible frontend keys.
- */
 function getFollowupSettings(body) {
   return body.followupSettings || body.followUpSettings || body.followup_settings || null;
 }
 
-/**
- * DB enum: ('not_opened','not_clicked','always','no_reply')
- */
 function normalizeFollowupCondition(raw) {
   const v = String(raw || "").trim().toLowerCase();
-
-  if (v === "not_opened" || v === "not_clicked" || v === "always") return v;
-
+  if (v === "not_opened" || v === "not_clicked" || v === "always" || v === "no_reply") return v;
   if (v.includes("not opened")) return "not_opened";
   if (v.includes("not clicked")) return "not_clicked";
   if (v.includes("always")) return "always";
   if (v.includes("no reply")) return "no_reply";
-
   return "not_opened";
+}
+
+/**
+ * ✅ Placeholder merger — replaces {Name}, {name}, {{name}}, {Company}, {Signature} etc.
+ * Handles both single-brace {key} and double-brace {{key}} syntax, case-insensitive.
+ */
+function mergePlaceholders(content, lead, payload = {}, signature = "") {
+  let out = content;
+
+  const name  = lead.name  || payload.name  || payload.Name  || "";
+  const email = lead.email || payload.email || payload.Email || "";
+
+  // Collect all payload fields for replacement
+  const sigHtml = signature ? String(signature).replace(/\n/g, "<br>") : "";
+
+  const allFields = {
+    name,  Name: name,
+    email, Email: email,
+    Signature: sigHtml,
+    signature: sigHtml,
+  };
+
+  // Merge all payload keys so any CSV column like {Company}, {Phone} etc. works
+  for (const [k, v] of Object.entries(payload)) {
+    allFields[k] = String(v || "");
+  }
+
+  for (const [key, value] of Object.entries(allFields)) {
+    const safe = String(value || "");
+    // Replace {{key}} (double brace)
+    out = out.replace(new RegExp(`\\{\\{\\s*${key}\\s*\\}\\}`, "gi"), safe);
+    // Replace {key} (single brace)
+    out = out.replace(new RegExp(`\\{\\s*${key}\\s*\\}`, "gi"), safe);
+  }
+
+  return out;
+}
+
+function parseRunAt(runAt) {
+  if (!runAt) return null;
+  const dt = new Date(runAt);
+  if (!Number.isNaN(dt.getTime())) return dt;
+
+  // Accept "YYYY-MM-DD HH:mm:ss" from frontend helper as local server time.
+  const normalized = String(runAt).trim().replace(" ", "T");
+  const fallback = new Date(normalized);
+  if (!Number.isNaN(fallback.getTime())) return fallback;
+  return null;
 }
 
 /**
@@ -118,7 +137,6 @@ router.post("/", async (req, res) => {
     const {
       userId: userIdRaw,
       name,
-      subject,
       templateId: templateIdRaw,
       template,
       leads,
@@ -130,6 +148,11 @@ router.post("/", async (req, res) => {
 
     const userId = toInt(userIdRaw);
     const templateId = templateIdRaw != null ? toInt(templateIdRaw) : null;
+
+    // ✅ Subject comes from template object
+    const subject = String(
+      req.body.subject || template?.subject || ""
+    ).trim();
 
     if (!userId || !name || !subject || !template || !Array.isArray(leads)) {
       await conn.rollback();
@@ -152,8 +175,14 @@ router.post("/", async (req, res) => {
     const followupTemplateId =
       followupEnabled ? (toInt(followupSettings?.templateId) || null) : null;
 
-    const followupSubject =
-      followupEnabled ? (String(followupSettings?.subject || "").trim() || null) : null;
+    // ✅ Followup subject from followup template object first
+    const followupSubject = followupEnabled
+      ? String(
+          followupSettings?.template?.subject ||
+          followupSettings?.subject ||
+          ""
+        ).trim() || null
+      : null;
 
     const followupCondition =
       followupEnabled ? normalizeFollowupCondition(followupSettings?.condition) : null;
@@ -167,8 +196,8 @@ router.post("/", async (req, res) => {
     const sendingFrom = settings?.sendingHours?.from || "09:00";
     const sendingTo = settings?.sendingHours?.to || "17:00";
 
-    // ✅ Schedule now if runAt missing
-    const scheduledAt = runAt ? new Date(runAt) : new Date();
+    const scheduledAt = parseRunAt(runAt);
+    const campaignStatus = scheduledAt ? "scheduled" : "draft";
 
     const [result] = await conn.query(
       `INSERT INTO email_campaigns
@@ -184,7 +213,7 @@ router.post("/", async (req, res) => {
         subject,
         template.content || "",
         templateId || null,
-        "scheduled",
+        campaignStatus,
         scheduledAt,
         leads.length,
         hasFollowup,
@@ -202,7 +231,6 @@ router.post("/", async (req, res) => {
 
     const campaignId = result.insertId;
 
-    // ✅ FIX: extractEmail() + extractName() use karo — case-insensitive
     const values = leads
       .filter((l) => {
         const email = extractEmail(l);
@@ -211,7 +239,7 @@ router.post("/", async (req, res) => {
       .map((l) => [
         campaignId,
         extractEmail(l).trim(),
-        extractName(l),          // ✅ "Name", "name", "NAME" sab handle hoga
+        extractName(l),
         JSON.stringify(l),
       ]);
 
@@ -255,7 +283,6 @@ router.get("/", async (req, res) => {
           ec.has_followup, ec.followup_template_id, ec.followup_subject,
           ec.followup_delay_hours, ec.followup_condition,
 
-          -- ✅ campaign_data se live unsubscribed count
           (
             SELECT COUNT(*)
             FROM campaign_data cd
@@ -420,12 +447,26 @@ router.post("/:id/send", async (req, res) => {
     if (!campaignId) return res.status(400).json({ success: false, message: "Invalid campaign ID" });
 
     const [[campaign]] = await conn.query(`SELECT * FROM email_campaigns WHERE id = ?`, [campaignId]);
-
     if (!campaign) return res.status(404).json({ success: false, message: "Campaign not found" });
 
     const userId = toInt(campaign.user_id);
     if (!userId) return res.status(400).json({ success: false, message: "Campaign has invalid user_id" });
 
+    // ✅ Fetch FRESH template content + subject from email_templates (not stale campaign.content)
+    const [[templateRow]] = await conn.query(
+      `SELECT subject, content FROM email_templates WHERE id = ?`,
+      [campaign.template_id]
+    );
+
+    if (!templateRow || !templateRow.content) {
+      return res.status(400).json({ success: false, message: "Template not found or has no content" });
+    }
+
+    const templateContent = templateRow.content;
+    // Subject: always from template (fresh), fallback to campaign.subject
+    const emailSubject = String(templateRow.subject?.trim() || campaign.subject || "");
+
+    // Mark unsubscribed before sending
     await conn.query(
       `UPDATE campaign_data cd
        JOIN unsubscribes u
@@ -444,8 +485,9 @@ router.post("/:id/send", async (req, res) => {
       [userId, campaignId]
     );
 
+    // ✅ Fetch pending leads WITH payload so we can merge placeholders
     const [leads] = await conn.query(
-      `SELECT id, email, name
+      `SELECT id, email, name, payload
        FROM campaign_data
        WHERE campaign_id = ? AND status = 'pending'`,
       [campaignId]
@@ -464,12 +506,37 @@ router.post("/:id/send", async (req, res) => {
       return res.json({ success: true, sentCount: 0, skippedUnsub: unsubCount });
     }
 
-    const emailAccount = await getLatestEmailAccount(userId);
-    const transporter = createTransporter(emailAccount);
+    // ✅ Fetch sender email account (with signature)
+    const [[emailAccount]] = await conn.query(
+      `SELECT
+         id,
+         from_name,
+         from_email        AS email,
+         smtp_username     AS smtp_user,
+         smtp_password     AS app_password,
+         smtp_host,
+         smtp_port,
+         smtp_security,
+         signature,
+         daily_limit
+       FROM user_email_accounts
+       WHERE user_id = ?
+       ORDER BY id DESC
+       LIMIT 1`,
+      [userId]
+    );
 
+    if (!emailAccount) {
+      return res.status(400).json({ success: false, message: "No email account configured for this user" });
+    }
+
+    const transporter = createTransporter(emailAccount);
     const baseUrl = process.env.APP_URL || "http://localhost:3001";
 
-    await conn.query(`UPDATE email_campaigns SET status = 'sending' WHERE id = ?`, [campaignId]);
+    await conn.query(
+      `UPDATE email_campaigns SET status = 'sending', subject = ? WHERE id = ?`,
+      [emailSubject, campaignId]
+    );
 
     let sentCount = 0;
 
@@ -478,6 +545,30 @@ router.post("/:id/send", async (req, res) => {
 
       const emailNorm = normEmail(lead.email);
 
+      // ✅ Parse payload JSON for placeholder values (CSV columns like Company, Phone etc.)
+      let payloadObj = {};
+      try {
+        payloadObj = lead.payload
+          ? typeof lead.payload === "string"
+            ? JSON.parse(lead.payload)
+            : lead.payload
+          : {};
+      } catch (_) {
+        payloadObj = {};
+      }
+
+      // ✅ Merge ALL placeholders: {Name}, {Company}, {Signature}, {{name}} etc.
+      let emailContent = mergePlaceholders(
+        templateContent,
+        lead,
+        payloadObj,
+        emailAccount.signature || ""
+      );
+
+      // Add tracking pixel
+      emailContent += `<img src="${baseUrl}/api/track/open?cid=${campaignId}&email=${encodeURIComponent(lead.email)}&t=${Date.now()}" width="1" height="1" style="display:none" />`;
+
+      // Add unsubscribe link
       const token = sign({
         email: emailNorm,
         userId,
@@ -488,19 +579,17 @@ router.post("/:id/send", async (req, res) => {
 
       const unsubUrl = `${baseUrl}/unsubscribe?token=${encodeURIComponent(token)}`;
 
+      emailContent += `
+        <hr/>
+        <p style="font-size:12px;color:#666;font-family:sans-serif;">
+          Don't want these emails? <a href="${unsubUrl}">Unsubscribe</a>
+        </p>`;
+
       const info = await transporter.sendMail({
         from: `"${emailAccount.from_name || "Campaign"}" <${emailAccount.email}>`,
         to: lead.email,
-        subject: campaign.subject,
-        html: `
-          <div style="width:100%;text-align:right;font-size:12px;margin-bottom:16px;">
-            <a href="${unsubUrl}"
-               style="color:#6e6e73;text-decoration:none;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-              Unsubscribe
-            </a>
-          </div>
-          ${campaign.content}
-        `,
+        subject: emailSubject,   // ✅ Always from template
+        html: emailContent,      // ✅ Placeholders fully replaced
         headers: {
           "List-Unsubscribe": `<${unsubUrl}>`,
           "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
