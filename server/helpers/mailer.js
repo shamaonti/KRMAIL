@@ -32,10 +32,19 @@ function createTransporter(account) {
     ...(isTLS ? { requireTLS: true } : {}), // enforce STARTTLS on 587
     tls: {
       rejectUnauthorized: false, // allow self-signed certs (safe for dev)
+      minVersion: "TLSv1.2",
     },
     connectionTimeout: 30000,
     greetingTimeout: 30000,
     socketTimeout: 30000,
+  });
+
+  transporter.verify((err) => {
+    if (err) {
+      console.error("❌ SMTP VERIFY FAILED:", err.message);
+    } else {
+      console.log("✅ SMTP VERIFY OK");
+    }
   });
 
   return transporter;

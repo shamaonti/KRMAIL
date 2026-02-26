@@ -566,11 +566,6 @@ const EmailTemplatesPage = () => {
                             value={formData.content}
                             onChange={(e) => handleFormChange("content", e.target.value)} />
                         )}
-                        {sigEnabled && (
-                          <p className="text-xs text-blue-600 bg-blue-50 border border-blue-200 rounded px-3 py-2">
-                            ✍️ <strong>{"{Signature}"}</strong> footer mein add ho gaya.
-                          </p>
-                        )}
                       </div>
 
                       {/* ── Follow-up Sequence Accordion ─────────────────── */}
