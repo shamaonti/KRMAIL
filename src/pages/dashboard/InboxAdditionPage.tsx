@@ -157,6 +157,39 @@ const InboxAdditionPage = () => {
     loadSavedData();
   }, []);
 
+  const handleTestConnection = async (config) => {
+    try {
+      if (!config.smtpHost || !config.smtpPort || !config.smtpUsername || !config.smtpPassword) {
+        alert("❌ Please fill all SMTP details first");
+        return;
+      }
+
+      const response = await fetch(`${API_BASE}/test`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          smtpHost: config.smtpHost,
+          smtpPort: config.smtpPort,
+          smtpUsername: config.smtpUsername,
+          smtpPassword: config.smtpPassword,
+          smtpSecurity: config.smtpSecurity
+        })
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        alert("✅ Test Connection Successful");
+      } else {
+        alert("❌ " + result.message);
+      }
+
+    } catch (error) {
+      alert("❌ Connection Failed");
+    }
+  };
   const handleSave = async () => {
     try {
       const storedUser = localStorage.getItem('user');
@@ -219,11 +252,7 @@ const InboxAdditionPage = () => {
       <header className="bg-white shadow-sm border-b border-gray-200 sticky top-0 z-50">
         <div className="px-4 py-3 flex justify-between items-center">
           <h2 className="text-lg font-semibold" style={{ color: '#012970' }}>Add Email Account</h2>
-          <div className="flex space-x-2">
-            <Button style={{ backgroundColor: '#1e3a8a' }} className="text-white py-2 px-3">
-              <TestTube className="mr-1 h-4 w-4" /> Test
-            </Button>
-          </div>
+         
         </div>
       </header>
 
@@ -248,14 +277,28 @@ const InboxAdditionPage = () => {
               {emailConfigs.map((config) => (
                 <div key={config.id} className="mb-6 relative border-2 p-4 rounded-lg bg-gray-50 shadow">
                   {/* Remove button */}
-                  {emailConfigs.length > 1 && (
-                    <button
-                      className="absolute top-2 right-2 text-red-500 font-bold text-xl hover:text-red-700"
-                      onClick={() => removeConfig(config.id)}
+                  <div className="absolute top-2 right-2 flex items-center gap-2">
+                    {/* Test Button */}
+                    <Button
+                      size="sm"
+                      style={{ backgroundColor: '#1e3a8a', color: 'white' }}
+                      className="h-7 px-2 flex items-center gap-1"
+                      onClick={() => handleTestConnection(config)}
                     >
-                      &times;
-                    </button>
-                  )}
+                      <TestTube className="h-4 w-4" />
+                      <span className="hidden sm:inline">Test Connection</span>
+                    </Button>
+
+                    {/* Remove Button */}
+                    {emailConfigs.length > 1 && (
+                      <button
+                        className="text-red-500 font-bold text-xl hover:text-red-700"
+                        onClick={() => removeConfig(config.id)}
+                      >
+                        &times;
+                      </button>
+                    )}
+                  </div>
 
                   {config.recordId && (
                     <div className="text-xs text-blue-600 font-semibold mb-3">
