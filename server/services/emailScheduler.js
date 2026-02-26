@@ -52,13 +52,10 @@ class EmailScheduler {
 
   /**
    * ✅ Merge ALL placeholders: {Name}, {Company}, {{name}}, {Signature} etc.
-   * Handles both single {key} and double {{key}} brace syntax, case-insensitive.
-   * Pulls all CSV columns from lead.payload JSON automatically.
    */
   mergePlaceholders(content, lead, signature = "") {
     let out = content;
 
-    // ✅ Parse payload JSON safely — contains all CSV columns (Company, Phone, etc.)
     let payloadObj = {};
     try {
       payloadObj = lead.payload
@@ -72,26 +69,19 @@ class EmailScheduler {
 
     const name  = lead.name  || payloadObj.name  || payloadObj.Name  || "";
     const email = lead.email || payloadObj.email || payloadObj.Email || "";
-
-    // ✅ Convert newlines to <br> for HTML emails
     const sigHtml = signature ? String(signature).replace(/\n/g, "<br>") : "";
 
-    // Build replacement map — explicit fields first, then all payload fields
     const allFields = {
-      // Always available
-      name,       Name: name,
-      email,      Email: email,
+      name,      Name: name,
+      email,     Email: email,
       Signature: sigHtml,
       signature: sigHtml,
-      // ✅ Spread ALL payload fields so {Company}, {Phone}, {Custom} etc. all work
       ...payloadObj,
     };
 
     for (const [key, value] of Object.entries(allFields)) {
       const safe = String(value ?? "");
-      // Replace {{key}} double-brace
       out = out.replace(new RegExp(`\\{\\{\\s*${key}\\s*\\}\\}`, "gi"), safe);
-      // Replace {key} single-brace
       out = out.replace(new RegExp(`\\{\\s*${key}\\s*\\}`, "gi"), safe);
     }
 
@@ -100,6 +90,58 @@ class EmailScheduler {
 
   getAppUrl() {
     return process.env.APP_URL || "http://localhost:3001";
+  }
+
+  // ✅ Schedule a follow-up into followup_queue with proper datetime
+  async scheduleFollowup(conn, { campaign, lead }) {
+    try {
+      if (
+        !campaign.has_followup ||
+        !campaign.followup_template_id ||
+        campaign.followup_delay_hours == null
+      ) return;
+
+      const delayHours  = parseFloat(campaign.followup_delay_hours) || 0;
+      const delayMs     = Math.round(delayHours * 60 * 60 * 1000);
+
+      // ✅ scheduled_at = NOW() + delayHours (stored as MySQL datetime)
+      const scheduledAt = new Date(Date.now() + delayMs);
+
+      // MySQL datetime format: YYYY-MM-DD HH:MM:SS
+      const toMySQLDatetime = (d) => {
+        const pad = (n) => String(n).padStart(2, "0");
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
+               `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+      };
+
+      const scheduledAtStr = toMySQLDatetime(scheduledAt);
+
+      await conn.query(
+        `INSERT INTO followup_queue
+           (campaign_id, user_id, email,
+            followup_template_id, followup_subject,
+            scheduled_at, \`condition\`, status,
+            created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', NOW(), NOW())`,
+        [
+          campaign.id,
+          campaign.user_id,
+          lead.email,
+          campaign.followup_template_id,
+          campaign.followup_subject || null,
+          scheduledAtStr,
+          campaign.followup_condition || "not_opened",
+        ]
+      );
+
+      console.log(
+        `📅 Follow-up scheduled → ${lead.email} at ${scheduledAtStr} ` +
+        `(+${delayHours}h, condition: ${campaign.followup_condition || "not_opened"})`
+      );
+    } catch (err) {
+      // Don't crash the main send loop if followup scheduling fails
+      console.error(`⚠️ Failed to schedule follow-up for ${lead.email}:`, err.message);
+    }
   }
 
   async checkAndSendScheduledCampaigns() {
@@ -176,7 +218,7 @@ class EmailScheduler {
 
       accountsWithCapacity.push({
         ...account,
-        sentToday:     sentCount,
+        sentToday:      sentCount,
         remainingToday: remaining,
       });
     }
@@ -207,7 +249,7 @@ class EmailScheduler {
       `📊 Batch size: ${batchSize} (${emailAccounts.length} accounts × ${maxLevel} max_level)`
     );
 
-    let leadIndex   = 0;
+    let leadIndex    = 0;
     let accountIndex = 0;
 
     while (leadIndex < batchSize && leadIndex < leads.length) {
@@ -261,6 +303,12 @@ class EmailScheduler {
     const delayMs  = campaign.delay_ms  || 200;
 
     console.log(`⚙️ Settings: max_level=${maxLevel}, delay_ms=${delayMs}ms`);
+    if (campaign.has_followup) {
+      console.log(
+        `📬 Follow-up: enabled | template_id=${campaign.followup_template_id} | ` +
+        `delay=${campaign.followup_delay_hours}h | condition=${campaign.followup_condition}`
+      );
+    }
 
     // ✅ Mark unsubscribed leads before sending
     const [unsubMarkResult] = await conn.query(
@@ -283,12 +331,13 @@ class EmailScheduler {
 
     console.log(`🚫 Marked ${unsubMarkResult.affectedRows || 0} leads as unsubscribed`);
 
-    let totalSent   = 0;
-    let totalFailed = 0;
-    let batchNumber = 0;
+    let totalSent      = 0;
+    let totalFailed    = 0;
+    let totalFollowups = 0;
+    let batchNumber    = 0;
 
     try {
-      // ✅ Fetch fresh subject + content from email_templates — NOT stale campaign.content
+      // ✅ Fetch fresh subject + content from email_templates
       const [templates] = await conn.query(
         `SELECT subject, content FROM email_templates WHERE id = ?`,
         [campaign.template_id]
@@ -306,11 +355,7 @@ class EmailScheduler {
       }
 
       const templateContent = templateRow.content;
-
-      // ✅ Subject from template (fresh), fallback to campaign.subject
-      const emailSubject = String(
-        templateRow.subject?.trim() || campaign.subject || ""
-      );
+      const emailSubject    = String(templateRow.subject?.trim() || campaign.subject || "");
 
       if (!emailSubject) {
         console.error("❌ No subject in template or campaign");
@@ -323,18 +368,16 @@ class EmailScheduler {
 
       console.log(`📝 Subject: "${emailSubject}"`);
 
-      // ✅ Sync subject to campaign row + mark as sending
       await conn.query(
         `UPDATE email_campaigns SET subject = ?, status = 'sending', updated_at = NOW() WHERE id = ?`,
         [emailSubject, campaign.id]
       );
 
-      // ─── Batch sending loop ────────────────────────────────────────────────
+      // ─── Batch sending loop ─────────────────────────────────────────────
       while (true) {
         batchNumber++;
         console.log(`\n🔄 === BATCH ${batchNumber} ===`);
 
-        // ✅ Fetch leads WITH payload column so placeholders can be merged
         const [leads] = await conn.query(
           `SELECT cd.id, cd.email, cd.name, cd.payload
            FROM campaign_data cd
@@ -391,19 +434,16 @@ class EmailScheduler {
           const transporter       = createTransporter(account);
 
           try {
-            // ✅ Merge ALL placeholders: {Name}, {Company}, {Signature}, {{name}} etc.
-            // account.signature is passed so {Signature} is replaced correctly
             let emailContent = this.mergePlaceholders(
               templateContent,
               lead,
               account.signature || ""
             );
 
-            // ✅ Tracking pixel
-            const trackingPixel = `<img src="${appUrl}/api/track/open?cid=${campaign.id}&email=${encodeURIComponent(lead.email)}&t=${Date.now()}" width="1" height="1" style="display:none" />`;
-            emailContent += trackingPixel;
+            // Tracking pixel
+            emailContent += `<img src="${appUrl}/api/track/open?cid=${campaign.id}&email=${encodeURIComponent(lead.email)}&t=${Date.now()}" width="1" height="1" style="display:none" />`;
 
-            // ✅ Unsubscribe link
+            // Unsubscribe link
             const token = sign({
               email:      leadEmailNorm,
               userId:     campaign.user_id,
@@ -424,14 +464,15 @@ class EmailScheduler {
             await transporter.sendMail({
               from:    `"${account.from_name || "Campaign"}" <${account.email}>`,
               to:      lead.email,
-              subject: emailSubject,   // ✅ Always from template
-              html:    emailContent,   // ✅ Fully placeholder-replaced
+              subject: emailSubject,
+              html:    emailContent,
               headers: {
                 "List-Unsubscribe":      `<${unsubUrl}>`,
                 "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
               },
             });
 
+            // ✅ Mark as sent
             await conn.query(
               `UPDATE campaign_data
                SET status = 'sent', sent_at = NOW(), sent_from_email = ?
@@ -442,6 +483,12 @@ class EmailScheduler {
             batchSent++;
             totalSent++;
             console.log(`✅ [${batchSent}/${distribution.length}] ${lead.email} ← ${account.email}`);
+
+            // ✅ Schedule follow-up (with scheduled_at + sent_at datetime)
+            if (campaign.has_followup) {
+              await this.scheduleFollowup(conn, { campaign, lead });
+              totalFollowups++;
+            }
 
             await this.delay(delayMs);
           } catch (err) {
@@ -465,11 +512,11 @@ class EmailScheduler {
 
         await conn.query(
           `UPDATE email_campaigns
-           SET sent_count        = ?,
-               failed_count      = ?,
+           SET sent_count         = ?,
+               failed_count       = ?,
                unsubscribed_count = ?,
-               status            = 'sending',
-               updated_at        = NOW()
+               status             = 'sending',
+               updated_at         = NOW()
            WHERE id = ?`,
           [totalSent, totalFailed, batchUnsubCount, campaign.id]
         );
@@ -491,18 +538,18 @@ class EmailScheduler {
           break;
         }
       }
-      // ─── End batch loop ────────────────────────────────────────────────────
+      // ─── End batch loop ────────────────────────────────────────────────
 
       const finalUnsubCount = await this.getUnsubscribedCount(conn, campaign.id);
 
       await conn.query(
         `UPDATE email_campaigns
-         SET status            = 'sent',
-             sent_count        = ?,
-             failed_count      = ?,
+         SET status             = 'sent',
+             sent_count         = ?,
+             failed_count       = ?,
              unsubscribed_count = ?,
-             completed_at      = NOW(),
-             updated_at        = NOW()
+             completed_at       = NOW(),
+             updated_at         = NOW()
          WHERE id = ?`,
         [totalSent, totalFailed, finalUnsubCount, campaign.id]
       );
@@ -512,6 +559,7 @@ class EmailScheduler {
       console.log(`📧 Total Sent:         ${totalSent}`);
       console.log(`❌ Total Failed:       ${totalFailed}`);
       console.log(`🚫 Total Unsubscribed: ${finalUnsubCount}`);
+      console.log(`📅 Follow-ups Queued:  ${totalFollowups}`);
 
       this.stats.totalSent   += totalSent;
       this.stats.totalFailed += totalFailed;

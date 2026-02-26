@@ -69,7 +69,7 @@ function getFollowupSettings(body) {
 
 function normalizeFollowupCondition(raw) {
   const v = String(raw || "").trim().toLowerCase();
-  if (v === "not_opened" || v === "not_clicked" || v === "always") return v;
+  if (v === "not_opened" || v === "not_clicked" || v === "always" || v === "no_reply") return v;
   if (v.includes("not opened")) return "not_opened";
   if (v.includes("not clicked")) return "not_clicked";
   if (v.includes("always")) return "always";
@@ -111,6 +111,18 @@ function mergePlaceholders(content, lead, payload = {}, signature = "") {
   }
 
   return out;
+}
+
+function parseRunAt(runAt) {
+  if (!runAt) return null;
+  const dt = new Date(runAt);
+  if (!Number.isNaN(dt.getTime())) return dt;
+
+  // Accept "YYYY-MM-DD HH:mm:ss" from frontend helper as local server time.
+  const normalized = String(runAt).trim().replace(" ", "T");
+  const fallback = new Date(normalized);
+  if (!Number.isNaN(fallback.getTime())) return fallback;
+  return null;
 }
 
 /**
@@ -184,7 +196,8 @@ router.post("/", async (req, res) => {
     const sendingFrom = settings?.sendingHours?.from || "09:00";
     const sendingTo = settings?.sendingHours?.to || "17:00";
 
-    const scheduledAt = runAt ? new Date(runAt) : new Date();
+    const scheduledAt = parseRunAt(runAt);
+    const campaignStatus = scheduledAt ? "scheduled" : "draft";
 
     const [result] = await conn.query(
       `INSERT INTO email_campaigns
@@ -200,7 +213,7 @@ router.post("/", async (req, res) => {
         subject,
         template.content || "",
         templateId || null,
-        "scheduled",
+        campaignStatus,
         scheduledAt,
         leads.length,
         hasFollowup,
