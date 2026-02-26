@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -34,6 +34,9 @@ const MailBoxPage = () => {
   const [replyMessage, setReplyMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [visibleCount, setVisibleCount] = useState(5);
+
+  // ✅ ONLY ADDITION: ref for reply box (scroll)
+  const replyBoxRef = useRef<HTMLDivElement | null>(null);
 
   const getCurrentUserId = () => {
     const user = JSON.parse(localStorage.getItem("user") || "{}");
@@ -71,6 +74,19 @@ const MailBoxPage = () => {
     fetchInboxEmails();
   }, []);
 
+  // ✅ ONLY ADDITION: when replyMode opens, auto-scroll to reply form
+  useEffect(() => {
+    if (replyMode) {
+      // small delay so DOM renders the reply form
+      setTimeout(() => {
+        replyBoxRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+      }, 50);
+    }
+  }, [replyMode]);
+
   // ==========================
   // SEND REPLY
   // ==========================
@@ -97,11 +113,12 @@ const MailBoxPage = () => {
         setReplyMessage("");
         fetchInboxEmails(); // optional refresh
       } else {
-        alert("Failed to send reply");
+        // ✅ ONLY CHANGE: show real backend error message
+        alert(result.message || "Failed to send reply");
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error("Reply error:", err);
-      alert("Error sending reply");
+      alert(err.message || "Error sending reply");
     }
   };
 
@@ -195,9 +212,17 @@ const MailBoxPage = () => {
           ) : (
             <>
               <CardHeader>
-                <h3 className="font-semibold text-[#012970]">
-                  {selectedEmail.subject}
-                </h3>
+                <div className="flex items-center justify-between">
+                  <h3 className="font-semibold text-[#012970]">
+                    {selectedEmail.subject}
+                  </h3>
+
+                  <Button onClick={() => setReplyMode(true)}>
+                    <Reply className="mr-2 h-4 w-4" />
+                    Reply
+                  </Button>
+                </div>
+
                 <p className="text-sm text-gray-600">
                   From: {selectedEmail.from_email}
                 </p>
@@ -206,13 +231,11 @@ const MailBoxPage = () => {
               <CardContent>
                 <p className="mb-6 whitespace-pre-wrap">{selectedEmail.body}</p>
 
-                <Button onClick={() => setReplyMode(true)}>
-                  <Reply className="mr-2 h-4 w-4" />
-                  Reply
-                </Button>
-
                 {replyMode && (
-                  <div className="mt-6 space-y-3 border-t pt-4">
+                  <div
+                    ref={replyBoxRef}
+                    className="mt-6 space-y-3 border-t pt-4"
+                  >
                     <Label>Subject</Label>
                     <Input
                       value={replySubject}
