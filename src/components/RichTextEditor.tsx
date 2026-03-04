@@ -36,6 +36,7 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
     ],
     clipboard: {
       matchVisual: false,
+      matchers: []
     }
   };
 

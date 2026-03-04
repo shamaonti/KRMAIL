@@ -5,7 +5,11 @@
   font-size: 14px;
   line-height: 1.5;
 }
-
+.ql-editor p {
+  margin: 0 !important;
+  padding: 0 !important;
+  line-height: 1.2;
+}
 .ql-toolbar {
   border-top: 1px solid #e5e7eb;
   border-left: 1px solid #e5e7eb;
