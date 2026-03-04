@@ -318,7 +318,12 @@ const EmailTemplatesPage = () => {
         user_id: userId,
         name: formData.name.trim(),
         subject: formData.subject.trim(),
-        content: formData.content,
+       content: formData.content
+         .replace(/<p><br\s*\/?><\/p>/gi, '<br>')
+         .replace(/<p>&nbsp;<\/p>/gi, '<br>')
+         .replace(/<\/p>/gi, '<br>')
+         .replace(/<p[^>]*>/gi, '')
+         .replace(/(<br\s*\/?>\s*){2,}/gi, '<br><br>'),
         template_type: categoryToTemplateType(formData.category),
         is_default: (formData.is_default ?? 0) as 0 | 1,
         followups: followupSteps.map((s, i) => ({
