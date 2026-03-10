@@ -10,6 +10,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import RichTextEditor from "@/components/RichTextEditor";
 import { useToast } from "@/hooks/use-toast";
+import { useHeaderActions } from "@/components/Header"; // ← ADD
 import {
   Plus, Eye, Copy, Edit, Trash2, Monitor, Smartphone,
   Save, Wand2, FileText, ChevronDown, ChevronUp, Clock,
@@ -29,7 +30,7 @@ const removeSig = (c: string) => {
 export type FollowUpCondition = "not_opened" | "not_clicked" | "always" | "no_reply";
 
 export type FollowUpStep = {
-  id?: number;               // DB id (undefined = new, set = existing)
+  id?: number;
   followup_order: number;
   delay_days: number;
   send_condition: FollowUpCondition;
@@ -50,7 +51,7 @@ type DbEmailTemplate = {
   id: number; user_id: number; name: string; subject: string | null;
   content: string | null; template_type: TemplateType; is_default: 0 | 1;
   created_at?: string; updated_at?: string;
-  followups?: FollowUpStep[];   // enriched by GET
+  followups?: FollowUpStep[];
 };
 
 type Performance = { opens: string; clicks: string; replies: string };
@@ -141,7 +142,6 @@ const FollowUpStepRow: React.FC<{
   onRemove: (i: number) => void;
 }> = ({ step, index, parentSubject, onChange, onRemove }) => (
   <div className="flex flex-col gap-3 p-4 bg-gradient-to-r from-purple-50 to-indigo-50 border border-purple-200 rounded-xl">
-    {/* Header */}
     <div className="flex items-center justify-between">
       <div className="flex items-center gap-2 flex-wrap">
         <span className="flex items-center justify-center w-6 h-6 bg-purple-600 text-white text-xs font-bold rounded-full">
@@ -161,18 +161,15 @@ const FollowUpStepRow: React.FC<{
       </Button>
     </div>
 
-    {/* Delay + Condition */}
     <div className="grid grid-cols-2 gap-3">
       <div className="space-y-1">
         <Label className="text-xs text-gray-600 flex items-center gap-1">
           <Clock className="h-3 w-3" /> Send After (days)
         </Label>
-        <Input
-          type="number" step="1" min="1" max="30"
+        <Input type="number" step="1" min="1" max="30"
           value={step.delay_days}
           onChange={(e) => onChange(index, { ...step, delay_days: parseInt(e.target.value) || 1 })}
-          className="h-8 text-xs bg-white" placeholder="1"
-        />
+          className="h-8 text-xs bg-white" placeholder="1" />
       </div>
       <div className="space-y-1">
         <Label className="text-xs text-gray-600">Send If</Label>
@@ -188,7 +185,6 @@ const FollowUpStepRow: React.FC<{
       </div>
     </div>
 
-    {/* Inline content */}
     <div className="space-y-1">
       <Label className="text-xs text-gray-600">Follow-up Email Body</Label>
       <Textarea rows={5}
@@ -202,6 +198,8 @@ const FollowUpStepRow: React.FC<{
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 const EmailTemplatesPage = () => {
+  const { setHeaderActions } = useHeaderActions(); // ← ADD
+
   const [templates, setTemplates] = useState<EmailTemplateUI[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState<EmailTemplateUI | null>(null);
   const [previewMode, setPreviewMode] = useState<"desktop" | "mobile">("desktop");
@@ -253,7 +251,6 @@ const EmailTemplatesPage = () => {
     loadTemplates().catch((e: any) =>
       toast({ title: "Load Failed", description: e.message, variant: "destructive" })
     );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
 
   useEffect(() => {
@@ -275,6 +272,24 @@ const EmailTemplatesPage = () => {
     }
     setFormData(null); setSigEnabled(false); setFollowupSteps([]); setFollowupOpen(false);
   }, [selectedTemplate, editMode, blankTemplate]);
+
+  // ── Inject buttons into global TopHeader ──────────────────────────────────
+  useEffect(() => {
+    setHeaderActions([
+      {
+        label: "AI Generate",
+        variant: "outline",
+        icon: <Wand2 className="h-4 w-4" />,
+        onClick: () => {},
+      },
+      {
+        label: "New Template",
+        variant: "default",
+        icon: <Plus className="h-4 w-4" />,
+        onClick: () => { setSelectedTemplate(null); setEditMode(true); },
+      },
+    ]);
+  }, []);
 
   const handleFormChange = (field: keyof EmailTemplateUI, value: any) =>
     setFormData((prev) => (prev ? { ...prev, [field]: value } : prev));
@@ -318,18 +333,15 @@ const EmailTemplatesPage = () => {
         user_id: userId,
         name: formData.name.trim(),
         subject: formData.subject.trim(),
-       content: formData.content
-         .replace(/<p><br\s*\/?><\/p>/gi, '<br>')
-         .replace(/<p>&nbsp;<\/p>/gi, '<br>')
-         .replace(/<\/p>/gi, '<br>')
-         .replace(/<p[^>]*>/gi, '')
-         .replace(/(<br\s*\/?>\s*){2,}/gi, '<br><br>'),
+        content: formData.content
+          .replace(/<p><br\s*\/?><\/p>/gi, '<br>')
+          .replace(/<p>&nbsp;<\/p>/gi, '<br>')
+          .replace(/<\/p>/gi, '<br>')
+          .replace(/<p[^>]*>/gi, '')
+          .replace(/(<br\s*\/?>\s*){2,}/gi, '<br><br>'),
         template_type: categoryToTemplateType(formData.category),
         is_default: (formData.is_default ?? 0) as 0 | 1,
-        followups: followupSteps.map((s, i) => ({
-          ...s,
-          followup_order: i + 1,
-        })),
+        followups: followupSteps.map((s, i) => ({ ...s, followup_order: i + 1 })),
       });
       toast({ title: formData.id ? "Template Updated" : "Template Saved", description: "Saved successfully" });
       await loadTemplates();
@@ -372,25 +384,8 @@ const EmailTemplatesPage = () => {
   ];
 
   return (
+    // ── LOCAL <header> REMOVED — buttons now in global TopHeader ──
     <div className="h-screen flex flex-col">
-      <header className="sticky top-0 z-30 bg-white shadow-sm border-b border-gray-200 h-16 flex items-center">
-        <div className="px-6 w-full flex items-center justify-between">
-          <h2 className="text-2xl font-nunito font-semibold" style={{ color: "#012970" }}>
-            Email Templates
-          </h2>
-          <div className="flex gap-3">
-            <Button variant="outline" className="border-gray-300" type="button">
-              <Wand2 className="mr-2 h-4 w-4" />AI Generate
-            </Button>
-            <Button type="button" className="text-white font-medium"
-              style={{ backgroundColor: "#1e3a8a" }}
-              onClick={() => { setSelectedTemplate(null); setEditMode(true); }}>
-              <Plus className="mr-2 h-4 w-4" />New Template
-            </Button>
-          </div>
-        </div>
-      </header>
-
       <main className="flex-1 overflow-y-auto p-6">
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)} className="w-full">
           <TabsList className="grid w-full grid-cols-2">
@@ -489,7 +484,6 @@ const EmailTemplatesPage = () => {
 
                     {/* ── Editor tab ──────────────────────────────────────── */}
                     <TabsContent value="editor" className="space-y-4 mt-4">
-
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div className="space-y-2">
                           <Label>Template Name</Label>
@@ -543,7 +537,6 @@ const EmailTemplatesPage = () => {
                         </Select>
                       </div>
 
-                      {/* Main email content */}
                       <div className="space-y-2">
                         <div className="flex items-center justify-between">
                           <Label>Email Content</Label>
