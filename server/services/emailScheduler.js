@@ -180,7 +180,8 @@ class EmailScheduler {
     }
   }
 
-  async getEmailAccountCapacity(conn, userId) {
+async getEmailAccountCapacity(conn, userId, inboxAccountId = null) {
+    const ids = inboxAccountId ? inboxAccountId.split(',').map(Number).filter(Boolean) : [];
     const [accounts] = await conn.query(
       `SELECT
          id,
@@ -194,8 +195,9 @@ class EmailScheduler {
          daily_limit,
          signature
        FROM user_email_accounts
-       WHERE user_id = ?`,
-      [userId]
+       WHERE user_id = ?
+       ${ids.length > 0 ? `AND id IN (${ids.map(() => '?').join(',')})` : ''}`,
+      ids.length > 0 ? [userId, ...ids] : [userId]
     );
 
     if (!accounts.length) return [];
@@ -393,7 +395,7 @@ class EmailScheduler {
 
         console.log(`📬 Pending leads: ${leads.length}`);
 
-        const emailAccounts = await this.getEmailAccountCapacity(conn, campaign.user_id);
+        const emailAccounts = await this.getEmailAccountCapacity(conn, campaign.user_id, campaign.inbox_account_id || null);
         if (!emailAccounts.length) {
           console.error("❌ No email accounts for user:", campaign.user_id);
           break;

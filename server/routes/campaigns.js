@@ -145,6 +145,7 @@ router.post("/", async (req, res) => {
     } = req.body;
 
     const followupSettings = getFollowupSettings(req.body);
+    const inboxAccountId = req.body.inboxAccountId || null;
 
     const userId = toInt(userIdRaw);
     const templateId = templateIdRaw != null ? toInt(templateIdRaw) : null;
@@ -205,8 +206,8 @@ router.post("/", async (req, res) => {
         status, scheduled_at, total_recipients,
         has_followup, followup_template_id,
         followup_subject, followup_delay_hours, followup_condition,
-        delay_ms, max_level, time_zone, sending_from, sending_to)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        delay_ms, max_level, time_zone, sending_from, sending_to,inbox_account_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?)`,
       [
         userId,
         name,
@@ -225,7 +226,8 @@ router.post("/", async (req, res) => {
         Number.isFinite(maxLevel) ? maxLevel : 100,
         timezone,
         sendingFrom,
-        sendingTo
+        sendingTo,
+        inboxAccountId
       ]
     );
 
@@ -505,9 +507,12 @@ router.post("/:id/send", async (req, res) => {
       );
       return res.json({ success: true, sentCount: 0, skippedUnsub: unsubCount });
     }
+    console.log('📨 inboxAccountId received:', req.body.inboxAccountId);
+    console.log('📨 userId:', userId);
 
+    const inboxIds = (req.body.inboxAccountId || '').split(',').map(Number).filter(Boolean);
     // ✅ Fetch sender email account (with signature)
-    const [[emailAccount]] = await conn.query(
+    const [emailAccounts] = await conn.query(
       `SELECT
          id,
          from_name,
@@ -521,16 +526,17 @@ router.post("/:id/send", async (req, res) => {
          daily_limit
        FROM user_email_accounts
        WHERE user_id = ?
-       ORDER BY id DESC
-       LIMIT 1`,
-      [userId]
+       ${inboxIds.length > 0 ? `AND id IN (${inboxIds.map(() => '?').join(',')})` : ''}
+       ORDER BY id DESC`,
+      inboxIds.length > 0 ? [userId, ...inboxIds] : [userId]
     );
 
-    if (!emailAccount) {
+    console.log('📨 emailAccounts found:', emailAccounts.map(a => a.email));
+
+    if (!emailAccounts.length) {
       return res.status(400).json({ success: false, message: "No email account configured for this user" });
     }
 
-    const transporter = createTransporter(emailAccount);
     const baseUrl = process.env.APP_URL || "http://localhost:3001";
 
     await conn.query(
@@ -539,9 +545,14 @@ router.post("/:id/send", async (req, res) => {
     );
 
     let sentCount = 0;
+    let accountIndex = 0;
 
     for (const lead of leads) {
       if (!lead?.email) continue;
+
+      const emailAccount = emailAccounts[accountIndex % emailAccounts.length];
+      accountIndex++;
+      const transporter = createTransporter(emailAccount);
 
       const emailNorm = normEmail(lead.email);
 
