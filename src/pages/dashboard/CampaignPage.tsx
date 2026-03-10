@@ -114,6 +114,9 @@ const CampaignPage = () => {
   const [sendingCampaignId, setSendingCampaignId] = useState<number | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [searchQuery, setSearchQuery] = useState('');
+  const [inboxEmails, setInboxEmails] = useState<{ id: number; from_name: string; from_email: string }[]>([]);
+  const [selectedInboxIds, setSelectedInboxIds] = useState<number[]>([]);
+  const [inboxDropdownOpen, setInboxDropdownOpen] = useState(false);
   const PAGE_SIZE = 10;
 
   const userId = (() => {
@@ -158,9 +161,19 @@ const CampaignPage = () => {
       setCampaigns([]);
     } finally { setIsLoadingCampaigns(false); }
   };
-
+const loadInboxEmails = async () => {
+  try {
+     const res = await fetch(`${API_BASE_URL}/api/emailcamp/details/${userId}`);
+    const data = await res.json();
+    if (data.success && Array.isArray(data.data)) {
+      setInboxEmails(data.data);
+      if (data.data.length > 0) setSelectedInboxIds([data.data[0].id]);
+    }
+  } catch { setErrors(["Failed to load inbox emails"]); }
+};
   useEffect(() => { loadEmailTemplates(); }, [userId]);
   useEffect(() => { loadCampaigns(); }, [userId]);
+  useEffect(() => { loadInboxEmails(); }, [userId]);
 
   const handleLeadsUploaded = (uploaded: Lead[]) => {
     setLeads((prev) => {
@@ -183,6 +196,7 @@ const CampaignPage = () => {
     if (!selectedTemplate) { setErrors(['Please select an email template']); return; }
     if (!selectedTemplate.subject?.trim()) { setErrors(['Selected template has no subject']); return; }
     if (leads.length === 0) { setErrors(['Please upload leads']); return; }
+    if (selectedInboxIds.length === 0) { setErrors(['Please select at least one inbox email']); return; }
     try {
       const campaignData = {
         userId, name: campaignName,
@@ -190,6 +204,7 @@ const CampaignPage = () => {
         templateId: selectedTemplate.id,
         template: selectedTemplate,
         leads,
+       inboxAccountId: selectedInboxIds.join(','),
         runAt: scheduleAt ? toDbDatetime(scheduleAt) : null,
         settings: { timezone, sendingHours, abTesting, delayBetweenEmails, maxLevel },
         followupSettings: followupEnabled && templateFollowups.length > 0
@@ -227,7 +242,11 @@ const CampaignPage = () => {
     if (!safeId) { setErrors(["Invalid campaign ID"]); return; }
     setSendingCampaignId(safeId); setIsSending(true); setErrors([]);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/campaigns/${safeId}/send`, { method: "POST" });
+     const res = await fetch(`${API_BASE_URL}/api/campaigns/${safeId}/send`, {
+  method: "POST",
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ inboxAccountId: selectedInboxIds.join(',') })
+});
       const data = safeJsonParse<any>(await res.text(), null);
       if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`);
       if (!data?.success) throw new Error(data?.message || "Send failed");
@@ -424,7 +443,65 @@ const CampaignPage = () => {
                     </p>
                   )}
                 </div>
-
+<div>
+  <Label>Send From (Inbox Email) *</Label>
+  <div className="border rounded-md mt-1">
+    {/* Top box — click to open/close */}
+    <div
+      className="flex flex-wrap gap-1 px-3 py-2 min-h-[40px] cursor-pointer items-center"
+      onClick={() => setInboxDropdownOpen(prev => !prev)}
+    >
+      {selectedInboxIds.length === 0 ? (
+        <span className="text-muted-foreground text-sm flex-1">Select inbox email(s)...</span>
+      ) : (
+        inboxEmails
+          .filter(e => selectedInboxIds.includes(e.id))
+          .map(e => (
+            <span key={e.id} className="flex items-center gap-1 bg-blue-900 text-white text-xs px-2 py-1 rounded-md">
+              {e.from_name ? `${e.from_name} <${e.from_email}>` : e.from_email}
+              <button
+                onClick={ev => {
+                  ev.stopPropagation();
+                  setSelectedInboxIds(prev => prev.filter(id => id !== e.id));
+                }}
+                className="ml-1 text-white hover:text-red-300 font-bold"
+              >×</button>
+            </span>
+          ))
+      )}
+      <span className="ml-auto text-muted-foreground text-xs">{inboxDropdownOpen ? '▲' : '▼'}</span>
+    </div>
+    {/* Dropdown — checkboxes */}
+    {inboxDropdownOpen && (
+      <div className="border-t p-3 space-y-2 max-h-48 overflow-y-auto">
+        {inboxEmails.length === 0 ? (
+          <p className="text-xs text-amber-600">⚠️ No inbox emails found. Please add one in Inbox Addition.</p>
+        ) : (
+          inboxEmails.map(email => (
+            <div key={email.id} className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id={`inbox-${email.id}`}
+                checked={selectedInboxIds.includes(email.id)}
+                onChange={e => {
+                  if (e.target.checked) {
+                    setSelectedInboxIds(prev => [...prev, email.id]);
+                  } else {
+                    setSelectedInboxIds(prev => prev.filter(id => id !== email.id));
+                  }
+                }}
+                className="w-4 h-4 cursor-pointer accent-blue-500"
+              />
+              <label htmlFor={`inbox-${email.id}`} className="text-sm cursor-pointer">
+                {email.from_name ? `${email.from_name} <${email.from_email}>` : email.from_email}
+              </label>
+            </div>
+          ))
+        )}
+      </div>
+    )}
+  </div>
+</div>
                 <div>
                   <Label>Schedule At (optional)</Label>
                   <Input type="datetime-local" value={scheduleAt}
