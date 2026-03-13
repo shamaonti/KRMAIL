@@ -198,7 +198,7 @@ const CampaignPage = () => {
         disabled: !selectedTemplate || leads.length === 0 || !campaignName.trim(),
       },
     ]);
-  }, [selectedTemplate, leads, campaignName, scheduleAt]);
+    }, [selectedTemplate, leads, campaignName, scheduleAt, followupEnabled]);
 
   // ── Handlers ───────────────────────────────────────────────────────────────
   const handleLeadsUploaded = (uploaded: Lead[]) => {
@@ -233,9 +233,16 @@ const CampaignPage = () => {
         inboxAccountId: selectedInboxIds.join(','),
         runAt: scheduleAt ? toDbDatetime(scheduleAt) : null,
         settings: { timezone, sendingHours, abTesting, delayBetweenEmails, maxLevel },
-        followupSettings: followupEnabled && templateFollowups.length > 0
-          ? { enabled: true, steps: templateFollowups }
-          : undefined,
+    followupSettings: followupEnabled
+  ? {
+      enabled: true,
+      steps: templateFollowups,
+      templateId: selectedTemplate.id,
+      subject: selectedTemplate.subject,
+      delayHours: templateFollowups.length > 0 ? (templateFollowups[0].delay_days ?? 1) * 24 : 24,
+      condition: templateFollowups.length > 0 ? templateFollowups[0].send_condition : 'not_opened',
+    }
+  : undefined,
       };
       const res = await fetch(`${API_BASE_URL}/api/campaigns`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -615,19 +622,10 @@ const CampaignPage = () => {
                     <Switch
                       checked={followupEnabled}
                       onCheckedChange={setFollowupEnabled}
-                      disabled={templateFollowups.length === 0}
                     />
                   </div>
 
-                  {templateFollowups.length === 0 ? (
-                    <div className="px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-lg">
-                      <p className="text-xs text-amber-700">
-                        ⚠️ No follow-ups in this template.
-                        <br />
-                        <span className="font-medium">Email Templates → Editor → Follow-up Sequence</span>
-                      </p>
-                    </div>
-                  ) : followupEnabled ? (
+                  {followupEnabled ? (
                     <div className="px-3 py-2.5 bg-purple-50 border border-purple-200 rounded-lg space-y-2">
                       <p className="text-xs font-semibold text-purple-700">
                         🔁 {templateFollowups.length} step{templateFollowups.length > 1 ? "s" : ""} will run:

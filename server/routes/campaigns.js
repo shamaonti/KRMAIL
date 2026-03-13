@@ -145,6 +145,9 @@ router.post("/", async (req, res) => {
     } = req.body;
 
     const followupSettings = getFollowupSettings(req.body);
+    // ADD THESE TWO LINES 👇
+console.log('🔍 followupSettings:', JSON.stringify(followupSettings));
+console.log('🔍 followupEnabled:', toBool(followupSettings?.enabled));
     const inboxAccountId = req.body.inboxAccountId || null;
 
     const userId = toInt(userIdRaw);
@@ -167,6 +170,7 @@ router.post("/", async (req, res) => {
 
     const followupEnabled = toBool(followupSettings?.enabled);
     const hasFollowup = followupEnabled ? 1 : 0;
+    console.log('🔍 hasFollowup:', hasFollowup, 'followupEnabled:', followupEnabled, 'settings:', JSON.stringify(followupSettings));
 
     const followupDelayHours =
       followupEnabled && followupSettings?.delayHours != null
@@ -618,8 +622,25 @@ router.post("/:id/send", async (req, res) => {
          WHERE id = ? AND status = 'pending'`,
         [emailAccount.email, smtpMessageId, lead.id]
       );
+sentCount++;
 
-      sentCount++;
+      // ✅ Schedule follow-up if enabled
+      if (campaign.has_followup && campaign.followup_template_id && campaign.followup_delay_hours != null) {
+        try {
+          const delayHours = parseFloat(campaign.followup_delay_hours) || 24;
+          const scheduledAt = new Date(Date.now() + delayHours * 60 * 60 * 1000);
+          const pad = (n) => String(n).padStart(2, "0");
+          const scheduledAtStr = `${scheduledAt.getFullYear()}-${pad(scheduledAt.getMonth()+1)}-${pad(scheduledAt.getDate())} ${pad(scheduledAt.getHours())}:${pad(scheduledAt.getMinutes())}:${pad(scheduledAt.getSeconds())}`;
+          await conn.query(
+            `INSERT INTO followup_queue (campaign_id, user_id, email, followup_template_id, followup_subject, scheduled_at, \`condition\`, status, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', NOW(), NOW())`,
+            [campaignId, userId, lead.email, campaign.followup_template_id, campaign.followup_subject || null, scheduledAtStr, campaign.followup_condition || 'not_opened']
+          );
+          console.log(`📅 Follow-up queued → ${lead.email} at ${scheduledAtStr}`);
+        } catch (fErr) {
+          console.error(`⚠️ Follow-up queue failed for ${lead.email}:`, fErr.message);
+        }
+      }
     }
 
     const [unsubResult] = await conn.query(
