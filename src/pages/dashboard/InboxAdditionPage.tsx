@@ -77,10 +77,35 @@ const InboxAdditionPage = () => {
     ));
   };
 
-  const removeConfig = (id) => {
-    if (emailConfigs.length > 1) {
-      setEmailConfigs(emailConfigs.filter(c => c.id !== id));
+  const removeConfig = async (id) => {
+    if (emailConfigs.length <= 1) return;
+
+    const confirmed = window.confirm("⚠️ Are you sure you want to delete this account?");
+    if (!confirmed) {
+      alert("❌ Deletion cancelled!");
+      return;
     }
+    const config = emailConfigs.find(c => c.id === id);
+
+    if (config?.recordId) {
+      try {
+        const res = await fetch(`${API_BASE}/delete/${config.recordId}`, {
+          method: 'DELETE',
+          credentials: 'include',
+        });
+        const result = await res.json();
+        if (!result.success) {
+          alert("❌ Failed to delete: " + result.message);
+          return;
+        }
+      } catch (err) {
+        alert("❌ Error deleting account.");
+        return;
+      }
+    }
+
+    setEmailConfigs(prev => prev.filter(c => c.id !== id));
+    alert("✅ Account removed successfully!");
   };
 
   const togglePasswordVisibility = (id) => {

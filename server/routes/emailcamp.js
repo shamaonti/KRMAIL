@@ -268,5 +268,21 @@ router.post('/test', async (req, res) => {
     });
   }
 });
-
+ 
+router.delete('/delete/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const [result] = await pool.query(
+      'DELETE FROM user_email_accounts WHERE id = ?',
+      [id]
+    );
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: 'Record not found' });
+    }
+    return res.json({ success: true, message: 'Email account deleted successfully' });
+  } catch (err) {
+    console.error('❌ DELETE ERROR:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
 module.exports = router;
