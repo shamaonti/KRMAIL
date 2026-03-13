@@ -1,4 +1,15 @@
-import React, { useEffect, useMemo, useState } from "react";
+// ─── Dashboard.tsx fix ───────────────────────────────────────────────────────
+// PROBLEM: Yeh line thi jo har route change par buttons clear kar deti thi:
+//
+//   useEffect(() => { setHeaderActions([]); }, [location.pathname]);
+//
+// Isko HATAO. Pages khud apne buttons inject karte hain useEffect se.
+// Dashboard ko beech mein clear karne ki zaroorat nahi.
+//
+// Dashboard component mein sirf yeh rakho:
+// ─────────────────────────────────────────────────────────────────────────────
+
+import React, { useEffect, useState } from "react";
 import { Routes, Route } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,7 +26,6 @@ import EmailTemplatesPage from "./dashboard/EmailTemplatesPage";
 import SettingsPage from "./dashboard/SettingsPage";
 import CampaignResult from "./dashboard/CampaignResult";
 
-// ─── All header logic lives in ONE place: @/components/Header ──────────────────
 import TopHeader, {
   HeaderActionsProvider,
   useHeaderActions,
@@ -78,9 +88,9 @@ const Sidebar = () => {
 // ─── Main Dashboard Layout ─────────────────────────────────────────────────────
 const Dashboard = () => {
   const [headerActions, setHeaderActions] = useState<HeaderAction[]>([]);
-  const location = useLocation();
 
-  useEffect(() => { setHeaderActions([]); }, [location.pathname]);
+  // ✅ REMOVED: useEffect(() => { setHeaderActions([]); }, [location.pathname]);
+  // Yeh line buttons ko clear karti thi — pages khud inject karte hain
 
   return (
     <HeaderActionsProvider headerActions={headerActions} setHeaderActions={setHeaderActions}>
@@ -162,7 +172,7 @@ const DashboardHome = () => {
     ]);
   }, [loading]);
 
-  const recentCampaigns = useMemo(() => recentCampaignsOverride ?? overview?.recentCampaigns ?? [], [overview, recentCampaignsOverride]);
+  const recentCampaigns = recentCampaignsOverride ?? overview?.recentCampaigns ?? [];
 
   return (
     <main className="p-6">
