@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -14,11 +14,11 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { useNavigate } from "react-router-dom";
-import { useHeaderActions } from "@/components/Header"; // ← ADD THIS IMPORT
+import { useHeaderActions } from "@/components/Header";
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:3001";
 
-// ─── Follow-up types (matches DB schema) ─────────────────────────────────────
+// ─── Follow-up types ──────────────────────────────────────────────────────────
 type FollowUpCondition = "not_opened" | "not_clicked" | "always" | "no_reply";
 type FollowUpStep = {
   id?: number;
@@ -52,20 +52,70 @@ interface Campaign {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-function toDbDatetime(v: string): string { return v ? v.replace("T", " ") + ":00" : ""; }
-function formatDisplay(dt?: string): string {
+
+/**
+ * Convert datetime-local input value to DB string (IST as-is, no UTC conversion)
+ * Input:  "2026-03-16T14:21"
+ * Output: "2026-03-16 14:21:00"
+ */
+function toDbDatetime(v: string): string {
+  if (!v) return "";
+  return v.replace("T", " ") + ":00";
+}
+
+/**
+ * Display IST time correctly — handles 2 cases from MySQL/Node.js driver:
+ *
+ * Case A — UTC ISO string (MySQL driver auto-converts DATETIME to JS Date):
+ *   "2026-03-16T09:32:00.000Z"  → add +5:30 → show 3:02 pm IST ✅
+ *
+ * Case B — Plain IST string (stored/returned as string):
+ *   "2026-03-16 15:02:00"  → use directly as IST ✅
+ */
+function formatDisplay(dt?: string | Date): string {
   if (!dt) return "-";
-  return new Date(dt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
+
+  const raw = String(dt).trim();
+  const p   = (n: number) => String(n).padStart(2, "0");
+
+  // Case A: has Z or +offset → it's UTC, add IST offset to convert
+  if (raw.endsWith("Z") || /[+-]\d{2}:\d{2}$/.test(raw)) {
+    const istMs   = new Date(raw).getTime() + 5.5 * 60 * 60 * 1000;
+    const istDate = new Date(istMs);
+    const h  = istDate.getUTCHours();
+    return `${istDate.getUTCDate()}/${istDate.getUTCMonth() + 1}/${istDate.getUTCFullYear()}, ${h % 12 || 12}:${p(istDate.getUTCMinutes())} ${h >= 12 ? "pm" : "am"}`;
+  }
+
+  // Case B: plain IST string "2026-03-16 15:02:00" — use as-is
+  const s          = raw.replace("T", " ").replace(/\.\d+$/, "");
+  const [dp = "", tp = ""] = s.split(" ");
+  const [y = "", mo = "", d = ""] = dp.split("-");
+  const ts = tp.split(":");
+  const h  = parseInt(ts[0] || "0", 10);
+  const mi = ts[1] || "00";
+  return `${parseInt(d)}/${parseInt(mo)}/${y}, ${h % 12 || 12}:${mi} ${h >= 12 ? "pm" : "am"}`;
 }
+
+/**
+ * Min value for datetime-local input — current IST time
+ * Works correctly on both local (IST) and production (UTC) servers
+ * because we use IST offset manually
+ */
 function localDatetimeMin(): string {
-  const now = new Date();
+  // Get current IST time regardless of server timezone
+  const nowUTC = Date.now();
+  const istOffset = 5.5 * 60 * 60 * 1000; // +5:30
+  const istNow = new Date(nowUTC + istOffset);
   const p = (n: number) => String(n).padStart(2, "0");
-  return `${now.getFullYear()}-${p(now.getMonth()+1)}-${p(now.getDate())}T${p(now.getHours())}:${p(now.getMinutes())}`;
+  return `${istNow.getUTCFullYear()}-${p(istNow.getUTCMonth() + 1)}-${p(istNow.getUTCDate())}T${p(istNow.getUTCHours())}:${p(istNow.getUTCMinutes())}`;
 }
+
 function toNum(v: any): number | null { const n = Number(v); return Number.isFinite(n) ? n : null; }
+
 function safeJsonParse<T = any>(s: string | null, fallback: T): T {
   try { return s ? (JSON.parse(s) as T) : fallback; } catch { return fallback; }
 }
+
 function getLeadField(lead: Lead, ...fields: string[]): string {
   if (!lead || typeof lead !== "object") return "";
   const keys = Object.keys(lead);
@@ -80,7 +130,7 @@ function extractLeadName(lead: Lead): string {
   const name = getLeadField(lead, "name");
   if (name) return name;
   const first = getLeadField(lead, "firstName", "first_name", "First Name");
-  const last  = getLeadField(lead, "lastName", "last_name", "Last Name");
+  const last  = getLeadField(lead, "lastName",  "last_name",  "Last Name");
   return `${first} ${last}`.trim() || "-";
 }
 function extractLeadEmail(lead: Lead): string {
@@ -92,49 +142,57 @@ function extractLeadCompany(lead: Lead): string {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 const CampaignPage = () => {
-  // ── ADD: inject into global TopHeader ──
   const { setHeaderActions } = useHeaderActions();
 
-  const [campaignName, setCampaignName] = useState('');
-  const [selectedTemplate, setSelectedTemplate] = useState<EmailTemplate | null>(null);
-  const [leads, setLeads] = useState<Lead[]>([]);
-  const [isSending, setIsSending] = useState(false);
-  const [sendingProgress, setSendingProgress] = useState(0);
-  const [previewMode, setPreviewMode] = useState<"desktop" | "mobile">("desktop");
-  const [templates, setTemplates] = useState<EmailTemplate[]>([]);
-  const [currentCampaign, setCurrentCampaign] = useState<Campaign | null>(null);
-  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
-  const [errors, setErrors] = useState<string[]>([]);
-  const [successMessage, setSuccessMessage] = useState('');
+  const [campaignName,       setCampaignName]       = useState('');
+  const [selectedTemplate,   setSelectedTemplate]   = useState<EmailTemplate | null>(null);
+  const [leads,              setLeads]              = useState<Lead[]>([]);
+  const [isSending,          setIsSending]          = useState(false);
+  const [sendingProgress,    setSendingProgress]    = useState(0);
+  const [previewMode,        setPreviewMode]        = useState<"desktop" | "mobile">("desktop");
+  const [templates,          setTemplates]          = useState<EmailTemplate[]>([]);
+  const [currentCampaign,    setCurrentCampaign]    = useState<Campaign | null>(null);
+  const [campaigns,          setCampaigns]          = useState<Campaign[]>([]);
+  const [errors,             setErrors]             = useState<string[]>([]);
+  const [successMessage,     setSuccessMessage]     = useState('');
   const [isLoadingCampaigns, setIsLoadingCampaigns] = useState(false);
-  const [showLeadsDialog, setShowLeadsDialog] = useState(false);
-  const [timezone, setTimezone] = useState('UTC');
-const [sendingHours, setSendingHours] = useState({ from: '09:00', to: '17:00' });
+  const [showLeadsDialog,    setShowLeadsDialog]    = useState(false);
 
+  // ✅ Default timezone = IST
+  const [timezone,           setTimezone]           = useState('IST');
+  const [sendingHours,       setSendingHours]       = useState({ from: '09:00', to: '17:00' });
 
-  const [abTesting, setAbTesting] = useState(false);
+  const [abTesting,          setAbTesting]          = useState(false);
   const [delayBetweenEmails, setDelayBetweenEmails] = useState(200);
-  const [maxLevel, setMaxLevel] = useState(100);
-  const [followupEnabled, setFollowupEnabled] = useState(false);
-  const [scheduleAt, setScheduleAt] = useState('');
-  const [sendingCampaignId, setSendingCampaignId] = useState<number | null>(null);
-  const [currentPage, setCurrentPage] = useState(1);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [inboxEmails, setInboxEmails] = useState<{ id: number; from_name: string; from_email: string }[]>([]);
-  const [selectedInboxIds, setSelectedInboxIds] = useState<number[]>([]);
-  const [inboxDropdownOpen, setInboxDropdownOpen] = useState(false);
+  const [maxLevel,           setMaxLevel]           = useState(100);
+  const [followupEnabled,    setFollowupEnabled]    = useState(false);
+  const [scheduleAt,         setScheduleAt]         = useState('');
+  const [sendingCampaignId,  setSendingCampaignId]  = useState<number | null>(null);
+  const [currentPage,        setCurrentPage]        = useState(1);
+  const [searchQuery,        setSearchQuery]        = useState('');
+  const [inboxEmails,        setInboxEmails]        = useState<{ id: number; from_name: string; from_email: string }[]>([]);
+  const [selectedInboxIds,   setSelectedInboxIds]   = useState<number[]>([]);
+  const [inboxDropdownOpen,  setInboxDropdownOpen]  = useState(false);
   const PAGE_SIZE = 10;
 
-  // Sync sending hours with scheduleAt: From = scheduled time, To = +8 hours
+  // ── Auto-sync sending hours from scheduleAt ────────────────────────────────
+  // scheduleAt = "2026-03-16T14:21" (IST time picked by user)
+  // From = that time, To = +8 hours
   useEffect(() => {
     if (!scheduleAt) return;
-    const scheduled = new Date(scheduleAt);
-    const fromHH = String(scheduled.getHours()).padStart(2, '0');
-    const fromMM = String(scheduled.getMinutes()).padStart(2, '0');
-    const toDate = new Date(scheduled.getTime() + 8 * 60 * 60 * 1000);
-    const toHH = String(toDate.getHours()).padStart(2, '0');
-    const toMM = String(toDate.getMinutes()).padStart(2, '0');
-    setSendingHours({ from: `${fromHH}:${fromMM}`, to: `${toHH}:${toMM}` });
+    // Parse the datetime-local value as IST
+    // "2026-03-16T14:21" split to get hours/minutes directly
+    const timePart = scheduleAt.split("T")[1] || "09:00";
+    const [hStr, mStr] = timePart.split(":");
+    const fromH = parseInt(hStr, 10);
+    const fromM = parseInt(mStr, 10);
+    const p = (n: number) => String(n).padStart(2, "0");
+
+    const toTotalMins = fromH * 60 + fromM + 8 * 60;
+    const toH = Math.floor(toTotalMins / 60) % 24;
+    const toM = toTotalMins % 60;
+
+    setSendingHours({ from: `${p(fromH)}:${p(fromM)}`, to: `${p(toH)}:${p(toM)}` });
   }, [scheduleAt]);
 
   const userId = (() => {
@@ -145,10 +203,10 @@ const [sendingHours, setSendingHours] = useState({ from: '09:00', to: '17:00' })
 
   const templateFollowups: FollowUpStep[] = selectedTemplate?.followups || [];
 
-  // ── API ────────────────────────────────────────────────────────────────────
+  // ── API calls ──────────────────────────────────────────────────────────────
   const loadEmailTemplates = async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/api/email-templates?userId=${userId}`);
+      const res  = await fetch(`${API_BASE_URL}/api/email-templates?userId=${userId}`);
       const data = await res.json();
       const list: EmailTemplate[] = Array.isArray(data.data) ? data.data : data.data?.templates || [];
       if (list.length === 0) setErrors(["No email templates found"]);
@@ -160,17 +218,22 @@ const [sendingHours, setSendingHours] = useState({ from: '09:00', to: '17:00' })
   const loadCampaigns = async () => {
     setIsLoadingCampaigns(true); setErrors([]);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/campaigns?userId=${userId}`);
+      const res  = await fetch(`${API_BASE_URL}/api/campaigns?userId=${userId}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       if (data.success) {
         setCampaigns((data.data || []).map((c: any) => {
           const id = toNum(c.id); if (!id) return null;
-          return { id, userId: toNum(c.userId) ?? userId, name: c.name, subject: c.subject,
-            template: c.template, leads: c.leads || [], status: c.status, createdAt: c.createdAt,
-            scheduledAt: c.scheduledAt, settings: c.settings, followupSettings: c.followupSettings,
-            sentCount: c.sentCount, openedCount: c.openedCount, clickedCount: c.clickedCount,
-            bouncedCount: c.bouncedCount, totalRecipients: c.totalRecipients } as Campaign;
+          return {
+            id, userId: toNum(c.userId) ?? userId,
+            name: c.name, subject: c.subject, template: c.template,
+            leads: c.leads || [], status: c.status,
+            createdAt: c.createdAt, scheduledAt: c.scheduledAt,
+            settings: c.settings, followupSettings: c.followupSettings,
+            sentCount: c.sentCount, openedCount: c.openedCount,
+            clickedCount: c.clickedCount, bouncedCount: c.bouncedCount,
+            totalRecipients: c.totalRecipients,
+          } as Campaign;
         }).filter(Boolean));
       } else setErrors([data.message || 'Failed to load campaigns']);
     } catch (e) {
@@ -181,7 +244,7 @@ const [sendingHours, setSendingHours] = useState({ from: '09:00', to: '17:00' })
 
   const loadInboxEmails = async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/api/emailcamp/details/${userId}`);
+      const res  = await fetch(`${API_BASE_URL}/api/emailcamp/details/${userId}`);
       const data = await res.json();
       if (data.success && Array.isArray(data.data)) {
         setInboxEmails(data.data);
@@ -191,28 +254,28 @@ const [sendingHours, setSendingHours] = useState({ from: '09:00', to: '17:00' })
   };
 
   useEffect(() => { loadEmailTemplates(); }, [userId]);
-  useEffect(() => { loadCampaigns(); }, [userId]);
-  useEffect(() => { loadInboxEmails(); }, [userId]);
+  useEffect(() => { loadCampaigns();       }, [userId]);
+  useEffect(() => { loadInboxEmails();     }, [userId]);
 
-  // ── Inject buttons into global TopHeader ──────────────────────────────────
+  // ── Inject header buttons ──────────────────────────────────────────────────
   useEffect(() => {
     setHeaderActions([
       {
-        label: "Preview",
-        variant: "outline",
-        icon: <Eye className="h-4 w-4" />,
-        onClick: handlePreview,
+        label:    "Preview",
+        variant:  "outline",
+        icon:     <Eye className="h-4 w-4" />,
+        onClick:  handlePreview,
         disabled: !selectedTemplate,
       },
       {
-        label: scheduleAt ? "Schedule Campaign" : "Save Campaign",
-        variant: "default",
-        icon: <Save className="h-4 w-4" />,
-        onClick: handleCreateCampaign,
+        label:    scheduleAt ? "Schedule Campaign" : "Save Campaign",
+        variant:  "default",
+        icon:     <Save className="h-4 w-4" />,
+        onClick:  handleCreateCampaign,
         disabled: !selectedTemplate || leads.length === 0 || !campaignName.trim(),
       },
     ]);
-    }, [selectedTemplate, leads, campaignName, scheduleAt, followupEnabled]);
+  }, [selectedTemplate, leads, campaignName, scheduleAt, followupEnabled]);
 
   // ── Handlers ───────────────────────────────────────────────────────────────
   const handleLeadsUploaded = (uploaded: Lead[]) => {
@@ -232,48 +295,56 @@ const [sendingHours, setSendingHours] = useState({ from: '09:00', to: '17:00' })
 
   const handleCreateCampaign = async () => {
     setErrors([]);
-    if (!campaignName.trim()) { setErrors(['Campaign name is required']); return; }
-    if (!selectedTemplate) { setErrors(['Please select an email template']); return; }
-    if (!selectedTemplate.subject?.trim()) { setErrors(['Selected template has no subject']); return; }
-    if (leads.length === 0) { setErrors(['Please upload leads']); return; }
-    if (selectedInboxIds.length === 0) { setErrors(['Please select at least one inbox email']); return; }
+    if (!campaignName.trim())              { setErrors(['Campaign name is required']);          return; }
+    if (!selectedTemplate)                 { setErrors(['Please select an email template']);    return; }
+    if (!selectedTemplate.subject?.trim()) { setErrors(['Selected template has no subject']);   return; }
+    if (leads.length === 0)                { setErrors(['Please upload leads']);                return; }
+    if (selectedInboxIds.length === 0)     { setErrors(['Please select at least one inbox email']); return; }
+
     try {
       const campaignData = {
-        userId, name: campaignName,
-        subject: selectedTemplate.subject,
+        userId,
+        name:       campaignName,
+        subject:    selectedTemplate.subject,
         templateId: selectedTemplate.id,
-        template: selectedTemplate,
+        template:   selectedTemplate,
         leads,
         inboxAccountId: selectedInboxIds.join(','),
+        // ✅ Send IST datetime string as-is (no UTC conversion)
         runAt: scheduleAt ? toDbDatetime(scheduleAt) : null,
         settings: { timezone, sendingHours, abTesting, delayBetweenEmails, maxLevel },
-    followupSettings: followupEnabled
-  ? {
-      enabled: true,
-      steps: templateFollowups,
-      templateId: selectedTemplate.id,
-      subject: selectedTemplate.subject,
-      delayHours: templateFollowups.length > 0 ? (templateFollowups[0].delay_days ?? 1) * 24 : 24,
-      condition: templateFollowups.length > 0 ? templateFollowups[0].send_condition : 'not_opened',
-    }
-  : undefined,
+        followupSettings: followupEnabled
+          ? {
+              enabled:    true,
+              steps:      templateFollowups,
+              templateId: selectedTemplate.id,
+              subject:    selectedTemplate.subject,
+              delayHours: templateFollowups.length > 0 ? (templateFollowups[0].delay_days ?? 1) * 24 : 24,
+              condition:  templateFollowups.length > 0 ? templateFollowups[0].send_condition : 'not_opened',
+            }
+          : undefined,
       };
-      const res = await fetch(`${API_BASE_URL}/api/campaigns`, {
+
+      const res  = await fetch(`${API_BASE_URL}/api/campaigns`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(campaignData),
       });
       const data = safeJsonParse<any>(await res.text(), null);
       if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`);
+
       if (data?.success) {
         const newId = toNum(data.campaignId);
         if (!newId) throw new Error("Invalid campaignId returned");
         setCurrentCampaign({
-          id: newId, userId, name: campaignName, subject: selectedTemplate.subject,
-          template: selectedTemplate, leads, status: scheduleAt ? 'scheduled' : 'draft',
+          id: newId, userId, name: campaignName,
+          subject: selectedTemplate.subject, template: selectedTemplate,
+          leads, status: scheduleAt ? 'scheduled' : 'draft',
           createdAt: new Date().toISOString(),
-          settings: campaignData.settings, followupSettings: campaignData.followupSettings,
+          settings: campaignData.settings,
+          followupSettings: campaignData.followupSettings,
         });
         await loadCampaigns();
+        // ✅ Show IST time in success message
         setSuccessMessage(scheduleAt
           ? `Scheduled for ${formatDisplay(toDbDatetime(scheduleAt))}`
           : 'Campaign saved successfully!');
@@ -289,10 +360,9 @@ const [sendingHours, setSendingHours] = useState({ from: '09:00', to: '17:00' })
     if (!safeId) { setErrors(["Invalid campaign ID"]); return; }
     setSendingCampaignId(safeId); setIsSending(true); setErrors([]);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/campaigns/${safeId}/send`, {
-        method: "POST",
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ inboxAccountId: selectedInboxIds.join(',') })
+      const res  = await fetch(`${API_BASE_URL}/api/campaigns/${safeId}/send`, {
+        method: "POST", headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ inboxAccountId: selectedInboxIds.join(',') }),
       });
       const data = safeJsonParse<any>(await res.text(), null);
       if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`);
@@ -314,25 +384,27 @@ const [sendingHours, setSendingHours] = useState({ from: '09:00', to: '17:00' })
     const safeId = toNum(campaignId);
     if (!safeId) { setErrors(["Invalid ID"]); return; }
     try {
-      const res = await fetch(`${API_BASE_URL}/api/campaigns/${safeId}`, { method: 'DELETE' });
+      const res  = await fetch(`${API_BASE_URL}/api/campaigns/${safeId}`, { method: 'DELETE' });
       const data = safeJsonParse<any>(await res.text(), null);
       if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`);
-      if (data?.success) { await loadCampaigns(); setSuccessMessage('Deleted'); setTimeout(() => setSuccessMessage(''), 3000); }
-      else setErrors([data?.message || 'Failed']);
+      if (data?.success) {
+        await loadCampaigns();
+        setSuccessMessage('Deleted');
+        setTimeout(() => setSuccessMessage(''), 3000);
+      } else setErrors([data?.message || 'Failed']);
     } catch (e) { setErrors([`Delete failed: ${e instanceof Error ? e.message : 'Unknown'}`]); }
   };
 
-  const filtered = campaigns.filter(c =>
+  const filtered  = campaigns.filter(c =>
     c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     c.subject.toLowerCase().includes(searchQuery.toLowerCase())
   );
-  const paginated = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+  const paginated  = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
 
+  // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <>
-      {/* ── LOCAL <header> REMOVED — buttons are now in TopHeader via useHeaderActions ── */}
-
       {/* Preview Modal */}
       <dialog id="preview-modal" className="rounded-lg backdrop:bg-black/30 p-0 w-full max-w-2xl">
         <div className="bg-card rounded-lg p-6">
@@ -340,7 +412,7 @@ const [sendingHours, setSendingHours] = useState({ from: '09:00', to: '17:00' })
             <h3 className="text-lg font-semibold">Email Preview</h3>
             <div className="flex gap-2">
               <Button size="sm" variant={previewMode === "desktop" ? "default" : "outline"} onClick={() => setPreviewMode("desktop")}>Desktop</Button>
-              <Button size="sm" variant={previewMode === "mobile" ? "default" : "outline"} onClick={() => setPreviewMode("mobile")}>Mobile</Button>
+              <Button size="sm" variant={previewMode === "mobile"  ? "default" : "outline"} onClick={() => setPreviewMode("mobile")}>Mobile</Button>
               <button className="ml-4 text-muted-foreground hover:text-foreground"
                 onClick={() => (document.getElementById('preview-modal') as HTMLDialogElement)?.close()}>✕</button>
             </div>
@@ -399,7 +471,10 @@ const [sendingHours, setSendingHours] = useState({ from: '09:00', to: '17:00' })
           <div className="max-h-[60vh] overflow-auto border rounded-md">
             <Table>
               <TableHeader>
-                <TableRow><TableHead>#</TableHead><TableHead>Email</TableHead><TableHead>Name</TableHead><TableHead>Company</TableHead></TableRow>
+                <TableRow>
+                  <TableHead>#</TableHead><TableHead>Email</TableHead>
+                  <TableHead>Name</TableHead><TableHead>Company</TableHead>
+                </TableRow>
               </TableHeader>
               <TableBody>
                 {leads.length === 0
@@ -418,7 +493,7 @@ const [sendingHours, setSendingHours] = useState({ from: '09:00', to: '17:00' })
         </div>
       </dialog>
 
-      {/* Main */}
+      {/* Main Content */}
       <main className="p-6 h-[calc(100vh-72px)] overflow-y-auto">
         {errors.length > 0 && (
           <Alert variant="destructive" className="mb-6">
@@ -445,17 +520,20 @@ const [sendingHours, setSendingHours] = useState({ from: '09:00', to: '17:00' })
         )}
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Campaign Setup */}
+          {/* ── Campaign Setup ── */}
           <div className="lg:col-span-2 space-y-6">
             <Card>
               <CardHeader><CardTitle>Campaign Setup</CardTitle></CardHeader>
               <CardContent className="space-y-4">
+
+                {/* Campaign Name */}
                 <div>
                   <Label>Campaign Name *</Label>
                   <Input placeholder="Enter campaign name" value={campaignName}
                     onChange={e => setCampaignName(e.target.value)} />
                 </div>
 
+                {/* Email Template */}
                 <div>
                   <Label>Email Template *</Label>
                   <Select value={selectedTemplate?.id.toString()}
@@ -477,6 +555,7 @@ const [sendingHours, setSendingHours] = useState({ from: '09:00', to: '17:00' })
                   )}
                 </div>
 
+                {/* Inbox Email */}
                 <div>
                   <Label>Send From (Inbox Email) *</Label>
                   <div className="border rounded-md mt-1">
@@ -535,15 +614,23 @@ const [sendingHours, setSendingHours] = useState({ from: '09:00', to: '17:00' })
                   </div>
                 </div>
 
+                {/* Schedule At */}
                 <div>
-                  <Label>Schedule At (optional)</Label>
-                  <Input type="datetime-local" value={scheduleAt}
-                    onChange={e => setScheduleAt(e.target.value)} min={localDatetimeMin()} />
+                  <Label>Schedule At — IST (optional)</Label>
+                  <Input
+                    type="datetime-local"
+                    value={scheduleAt}
+                    onChange={e => setScheduleAt(e.target.value)}
+                    min={localDatetimeMin()}
+                  />
                   <p className="text-xs text-muted-foreground mt-1">
-                    {scheduleAt ? `Will send at ${formatDisplay(toDbDatetime(scheduleAt))}` : 'Leave empty to save as draft'}
+                    {scheduleAt
+                      ? `✅ Will send at ${formatDisplay(toDbDatetime(scheduleAt))} IST`
+                      : 'Leave empty to save as draft'}
                   </p>
                 </div>
 
+                {/* Leads Upload */}
                 <div className="space-y-2">
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-2">
@@ -562,6 +649,7 @@ const [sendingHours, setSendingHours] = useState({ from: '09:00', to: '17:00' })
                   <CSVUploader onLeadsUploaded={handleLeadsUploaded} existingLeads={leads} />
                 </div>
 
+                {/* Current Campaign Status */}
                 {currentCampaign && (
                   <Card className="bg-green-50 border-green-200">
                     <CardContent className="p-4 flex justify-between items-center">
@@ -577,40 +665,56 @@ const [sendingHours, setSendingHours] = useState({ from: '09:00', to: '17:00' })
             </Card>
           </div>
 
-          {/* Settings */}
+          {/* ── Settings ── */}
           <div className="space-y-6">
             <Card>
               <CardHeader><CardTitle>Settings</CardTitle></CardHeader>
               <CardContent className="space-y-4">
+
+                {/* Time Zone — IST default */}
                 <div className="space-y-2">
                   <Label>Time Zone</Label>
                   <Select value={timezone} onValueChange={setTimezone}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
+                      <SelectItem value="IST">IST (India) ✅</SelectItem>
                       <SelectItem value="UTC">UTC</SelectItem>
                       <SelectItem value="EST">EST</SelectItem>
                       <SelectItem value="PST">PST</SelectItem>
                       <SelectItem value="GMT">GMT</SelectItem>
-                      <SelectItem value="IST">IST (India)</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
 
+                {/* Sending Hours — auto-set from scheduleAt */}
                 <div className="space-y-2">
-                  <Label>Sending Hours</Label>
+                  <Label>Sending Hours (IST)</Label>
                   <div className="grid grid-cols-2 gap-2">
-                    <div><Label className="text-sm">From</Label>
-                      <Input type="time" value={sendingHours.from} onChange={e => setSendingHours(p => ({ ...p, from: e.target.value }))} /></div>
-                    <div><Label className="text-sm">To</Label>
-                      <Input type="time" value={sendingHours.to} onChange={e => setSendingHours(p => ({ ...p, to: e.target.value }))} /></div>
+                    <div>
+                      <Label className="text-sm">From</Label>
+                      <Input type="time" value={sendingHours.from}
+                        onChange={e => setSendingHours(p => ({ ...p, from: e.target.value }))} />
+                    </div>
+                    <div>
+                      <Label className="text-sm">To</Label>
+                      <Input type="time" value={sendingHours.to}
+                        onChange={e => setSendingHours(p => ({ ...p, to: e.target.value }))} />
+                    </div>
                   </div>
+                  {scheduleAt && (
+                    <p className="text-xs text-blue-600">
+                      ℹ️ Auto-set from schedule time (+8 hrs window)
+                    </p>
+                  )}
                 </div>
 
+                {/* A/B Testing */}
                 <div className="flex items-center justify-between">
                   <Label>A/B Testing</Label>
                   <Switch checked={abTesting} onCheckedChange={setAbTesting} />
                 </div>
 
+                {/* Delay Between Emails */}
                 <div className="space-y-2">
                   <Label>Delay Between Emails (ms)</Label>
                   <Input type="number" value={delayBetweenEmails}
@@ -618,6 +722,7 @@ const [sendingHours, setSendingHours] = useState({ from: '09:00', to: '17:00' })
                     min="100" max="5000" />
                 </div>
 
+                {/* Max Level */}
                 <div className="space-y-2">
                   <Label>Max Level (Per Sender)</Label>
                   <Input type="number" value={maxLevel}
@@ -626,17 +731,14 @@ const [sendingHours, setSendingHours] = useState({ from: '09:00', to: '17:00' })
                   <p className="text-xs text-muted-foreground">Max emails per sender per round</p>
                 </div>
 
-                {/* ── Follow-up Toggle ──────────────────────────────────── */}
+                {/* Follow-up Toggle */}
                 <div className="pt-4 border-t space-y-3">
                   <div className="flex items-center justify-between">
                     <div>
                       <Label className="text-sm font-semibold">Follow-up Emails</Label>
                       <p className="text-xs text-muted-foreground mt-0.5">Use sequence from template</p>
                     </div>
-                    <Switch
-                      checked={followupEnabled}
-                      onCheckedChange={setFollowupEnabled}
-                    />
+                    <Switch checked={followupEnabled} onCheckedChange={setFollowupEnabled} />
                   </div>
 
                   {followupEnabled ? (
@@ -667,15 +769,18 @@ const [sendingHours, setSendingHours] = useState({ from: '09:00', to: '17:00' })
           </div>
         </div>
 
-        {/* Campaign Table */}
+        {/* ── Campaign Table ── */}
         <div className="mt-6">
           <Card className="overflow-hidden">
             <CardHeader className="flex flex-row items-center justify-between sticky top-0 z-40 bg-card">
               <CardTitle>Database Campaigns</CardTitle>
               <div className="flex gap-2">
-                <Input placeholder="Search campaigns..." value={searchQuery}
+                <Input
+                  placeholder="Search campaigns..."
+                  value={searchQuery}
                   onChange={e => { setSearchQuery(e.target.value); setCurrentPage(1); }}
-                  className="w-64" />
+                  className="w-64"
+                />
                 <Button size="sm" variant="outline" onClick={loadCampaigns} disabled={isLoadingCampaigns}>
                   <RefreshCw className={`h-4 w-4 mr-2 ${isLoadingCampaigns ? "animate-spin" : ""}`} /> Reload
                 </Button>
@@ -695,8 +800,9 @@ const [sendingHours, setSendingHours] = useState({ from: '09:00', to: '17:00' })
                     <Table>
                       <TableHeader className="sticky top-0 z-30 bg-card">
                         <TableRow>
-                          <TableHead>Campaign</TableHead><TableHead>Status</TableHead>
-                          <TableHead>Scheduled At</TableHead>
+                          <TableHead>Campaign</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead>Scheduled At (IST)</TableHead>
                           <TableHead className="text-center">Recipients</TableHead>
                           <TableHead className="text-center">Sent</TableHead>
                           <TableHead className="text-center">Opened</TableHead>
@@ -714,9 +820,9 @@ const [sendingHours, setSendingHours] = useState({ from: '09:00', to: '17:00' })
                             </TableCell>
                             <TableCell>
                               <Badge variant={
-                                c.status === 'sent' ? 'default' :
-                                c.status === 'scheduled' ? 'secondary' :
-                                c.status === 'sending' ? 'destructive' : 'outline'
+                                c.status === 'sent'      ? 'default'     :
+                                c.status === 'scheduled' ? 'secondary'   :
+                                c.status === 'sending'   ? 'destructive' : 'outline'
                               }>{c.status}</Badge>
                             </TableCell>
                             <TableCell>
@@ -725,10 +831,13 @@ const [sendingHours, setSendingHours] = useState({ from: '09:00', to: '17:00' })
                                 : <span className="text-muted-foreground text-sm">-</span>}
                             </TableCell>
                             <TableCell className="text-center">{c.totalRecipients ?? c.leads?.length ?? 0}</TableCell>
-                            <TableCell className="text-center">{c.sentCount ?? 0}</TableCell>
+                            <TableCell className="text-center">{c.sentCount   ?? 0}</TableCell>
                             <TableCell className="text-center">{c.openedCount ?? 0}</TableCell>
                             <TableCell className="text-center">{c.clickedCount ?? 0}</TableCell>
-                            <TableCell>{new Date(c.createdAt).toLocaleDateString("en-IN")}</TableCell>
+                            <TableCell>
+                              {/* createdAt from DB is also IST plain string */}
+                              {formatDisplay(c.createdAt)}
+                            </TableCell>
                             <TableCell>
                               <div className="flex items-center gap-1">
                                 {(c.status === 'draft' || c.status === 'scheduled') && (
@@ -757,18 +866,26 @@ const [sendingHours, setSendingHours] = useState({ from: '09:00', to: '17:00' })
                       </TableBody>
                     </Table>
                   </div>
+
+                  {/* Pagination */}
                   {totalPages > 1 && (
                     <div className="flex items-center justify-between pt-4 border-t">
                       <div className="text-sm text-muted-foreground">
-                        Showing {((currentPage-1)*PAGE_SIZE)+1}–{Math.min(currentPage*PAGE_SIZE, filtered.length)} of {filtered.length}
+                        Showing {((currentPage - 1) * PAGE_SIZE) + 1}–{Math.min(currentPage * PAGE_SIZE, filtered.length)} of {filtered.length}
                       </div>
                       <div className="flex gap-2">
-                        <Button size="sm" variant="outline" onClick={() => setCurrentPage(p => Math.max(1, p-1))} disabled={currentPage === 1}>Previous</Button>
-                        {Array.from({ length: totalPages }, (_, i) => i+1).map(page => (
-                          <Button key={page} size="sm" variant={currentPage === page ? 'default' : 'outline'}
-                            onClick={() => setCurrentPage(page)} className="min-w-10">{page}</Button>
+                        <Button size="sm" variant="outline"
+                          onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                          disabled={currentPage === 1}>Previous</Button>
+                        {Array.from({ length: totalPages }, (_, i) => i + 1).map(page => (
+                          <Button key={page} size="sm"
+                            variant={currentPage === page ? 'default' : 'outline'}
+                            onClick={() => setCurrentPage(page)}
+                            className="min-w-10">{page}</Button>
                         ))}
-                        <Button size="sm" variant="outline" onClick={() => setCurrentPage(p => Math.min(totalPages, p+1))} disabled={currentPage === totalPages}>Next</Button>
+                        <Button size="sm" variant="outline"
+                          onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                          disabled={currentPage === totalPages}>Next</Button>
                       </div>
                     </div>
                   )}
