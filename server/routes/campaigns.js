@@ -13,26 +13,29 @@ async function q(sql, params = []) {
 }
 
 /**
- * ✅ Convert MySQL DATETIME (may come as JS Date object) to IST plain string
- * MySQL Node.js driver often returns DATETIME columns as JS Date objects (UTC)
- * We convert them to "YYYY-MM-DD HH:MM:SS" in IST so frontend displays correctly
+ * ✅ Convert MySQL DATETIME (JS Date object) to plain string "YYYY-MM-DD HH:MM:SS"
  *
- * Input:  Date object (UTC)  OR  "2026-03-16 15:02:00" string
- * Output: "2026-03-16 15:02:00"  (IST plain string)
+ * Production server is IST (GMT+0530), so MySQL driver returns Date objects
+ * with correct IST local time already. We just need to extract local time parts.
+ *
+ * Example: Date object = "Mon Mar 16 2026 15:35:00 GMT+0530"
+ * → getHours() = 15, getMinutes() = 35  ✅ correct IST
+ * → getUTCHours() = 10  ❌ wrong (UTC)
  */
 function toISTString(dt) {
   if (!dt) return null;
-  // If already a plain string with no Z, return as-is
-  if (typeof dt === "string" && !dt.endsWith("Z") && !dt.includes("+")) {
-    return dt.replace("T", " ").replace(/\.\d+$/, "");
-  }
-  // It's a Date object or UTC ISO string — convert to IST
-  const ms      = (dt instanceof Date) ? dt.getTime() : new Date(dt).getTime();
-  const istMs   = ms + 5.5 * 60 * 60 * 1000;
-  const istDate = new Date(istMs);
+
   const pad = (n) => String(n).padStart(2, "0");
-  return `${istDate.getUTCFullYear()}-${pad(istDate.getUTCMonth() + 1)}-${pad(istDate.getUTCDate())} ` +
-         `${pad(istDate.getUTCHours())}:${pad(istDate.getUTCMinutes())}:${pad(istDate.getUTCSeconds())}`;
+
+  // JS Date object — use LOCAL time methods (server is IST = correct)
+  if (dt instanceof Date) {
+    return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())} ` +
+           `${pad(dt.getHours())}:${pad(dt.getMinutes())}:${pad(dt.getSeconds())}`;
+  }
+
+  // Plain string — return as-is (already IST)
+  const s = String(dt).trim();
+  return s.replace("T", " ").replace(/\.\d+Z?$/, "");
 }
 
 function toInt(value) {
