@@ -109,7 +109,9 @@ const CampaignPage = () => {
   const [isLoadingCampaigns, setIsLoadingCampaigns] = useState(false);
   const [showLeadsDialog, setShowLeadsDialog] = useState(false);
   const [timezone, setTimezone] = useState('UTC');
-  const [sendingHours, setSendingHours] = useState({ from: '09:00', to: '17:00' });
+const [sendingHours, setSendingHours] = useState({ from: '09:00', to: '17:00' });
+
+
   const [abTesting, setAbTesting] = useState(false);
   const [delayBetweenEmails, setDelayBetweenEmails] = useState(200);
   const [maxLevel, setMaxLevel] = useState(100);
@@ -122,6 +124,18 @@ const CampaignPage = () => {
   const [selectedInboxIds, setSelectedInboxIds] = useState<number[]>([]);
   const [inboxDropdownOpen, setInboxDropdownOpen] = useState(false);
   const PAGE_SIZE = 10;
+
+  // Sync sending hours with scheduleAt: From = scheduled time, To = +8 hours
+  useEffect(() => {
+    if (!scheduleAt) return;
+    const scheduled = new Date(scheduleAt);
+    const fromHH = String(scheduled.getHours()).padStart(2, '0');
+    const fromMM = String(scheduled.getMinutes()).padStart(2, '0');
+    const toDate = new Date(scheduled.getTime() + 8 * 60 * 60 * 1000);
+    const toHH = String(toDate.getHours()).padStart(2, '0');
+    const toMM = String(toDate.getMinutes()).padStart(2, '0');
+    setSendingHours({ from: `${fromHH}:${fromMM}`, to: `${toHH}:${toMM}` });
+  }, [scheduleAt]);
 
   const userId = (() => {
     const u = safeJsonParse<{ id?: number }>(localStorage.getItem('user'), {});
