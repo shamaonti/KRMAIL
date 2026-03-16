@@ -178,8 +178,9 @@ console.log('🔍 followupEnabled:', toBool(followupSettings?.enabled));
         : null;
 
     const followupTemplateId =
-      followupEnabled ? (toInt(followupSettings?.templateId) || null) : null;
-
+      followupEnabled 
+        ? (toInt(followupSettings?.steps?.[0]?.id) || toInt(followupSettings?.templateId) || null) 
+        : null;
     // ✅ Followup subject from followup template object first
     const followupSubject = followupEnabled
       ? String(
@@ -632,9 +633,9 @@ sentCount++;
           const pad = (n) => String(n).padStart(2, "0");
           const scheduledAtStr = `${scheduledAt.getFullYear()}-${pad(scheduledAt.getMonth()+1)}-${pad(scheduledAt.getDate())} ${pad(scheduledAt.getHours())}:${pad(scheduledAt.getMinutes())}:${pad(scheduledAt.getSeconds())}`;
           await conn.query(
-            `INSERT INTO followup_queue (campaign_id, user_id, email, followup_template_id, followup_subject, scheduled_at, \`condition\`, status, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', NOW(), NOW())`,
-            [campaignId, userId, lead.email, campaign.followup_template_id, campaign.followup_subject || null, scheduledAtStr, campaign.followup_condition || 'not_opened']
+           `INSERT INTO followup_queue (campaign_id, user_id, email, followup_template_id, followup_subject, scheduled_at, status, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, 'pending', NOW(), NOW())`,
+            [campaignId, userId, lead.email, campaign.followup_template_id, campaign.followup_subject || null, scheduledAtStr]
           );
           console.log(`📅 Follow-up queued → ${lead.email} at ${scheduledAtStr}`);
         } catch (fErr) {

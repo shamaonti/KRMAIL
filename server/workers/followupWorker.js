@@ -126,6 +126,13 @@ async function fetchFollowupTargets(limit = MAX_PER_TICK) {
 
       -- ✅ Delay (supports decimals like 0.083 hours)
       AND cd.sent_at <= DATE_SUB(NOW(), INTERVAL (ec.followup_delay_hours * 3600) SECOND)
+      AND EXISTS (
+        SELECT 1 FROM followup_queue fq
+        WHERE fq.campaign_id = cd.campaign_id
+          AND fq.email = cd.email
+          AND fq.status = 'pending'
+          AND fq.scheduled_at <= NOW()
+      )
 
       -- ✅ Unsubscribe guard
       AND u.id IS NULL
@@ -318,6 +325,13 @@ async function runFollowups() {
 
         await sendOneFollowup(row);
         await markFollowupSent(row.id);
+        // ✅ Mark followup_queue as sent
+        await db.query(
+          `UPDATE followup_queue 
+           SET status = 'sent', updated_at = NOW()
+           WHERE campaign_id = ? AND email = ? AND status = 'pending'`,
+          [row.campaign_id, row.email]
+        );
 
         console.log(
           `✅ Follow-up sent → ${row.email} from ${row.sent_from_email} [campaign_id=${row.campaign_id}]`
