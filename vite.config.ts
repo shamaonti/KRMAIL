@@ -8,8 +8,9 @@ export default defineConfig(({ mode }) => {
 
   return {
     server: {
-      host: "::",
+      host: "0.0.0.0",   // external access (ngrok) allow karega
       port: 8080,
+      strictPort: true,
       proxy: {
         '/api': {
           target: env.VITE_API_URL,
@@ -18,10 +19,12 @@ export default defineConfig(({ mode }) => {
         }
       }
     },
+
     plugins: [
       react(),
-      mode === 'development' && componentTagger(),
+      mode === "development" && componentTagger(),
     ].filter(Boolean),
+
     resolve: {
       alias: {
         "@": path.resolve(__dirname, "./src"),
