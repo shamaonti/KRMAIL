@@ -20,19 +20,22 @@ router.get("/inbox/:userId", async (req, res) => {
     const [rows] = await db.query(
       `
       SELECT 
-        id,
-        user_id,
-        account_email,
-        from_email,
-        to_email,
-        subject,
-        body,
-        preview,
-        is_read,
-        received_at
-      FROM inbox_emails
-      WHERE user_id = ?
-      ORDER BY account_email, received_at DESC
+        ie.id,
+        ie.user_id,
+        ie.account_email,
+        ie.from_email,
+        ie.to_email,
+        ie.subject,
+        ie.body,
+        ie.preview,
+        ie.is_read,
+        ie.received_at
+      FROM inbox_emails ie
+      INNER JOIN user_email_accounts uea 
+        ON ie.account_email = uea.from_email 
+        AND uea.user_id = ie.user_id
+      WHERE ie.user_id = ?
+      ORDER BY ie.account_email, ie.received_at DESC
       `,
       [userId]
     );

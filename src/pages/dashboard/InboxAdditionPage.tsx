@@ -7,7 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
-import { Eye, EyeOff, TestTube, Save } from "lucide-react";
+import { Eye, EyeOff, TestTube, Save, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { useHeaderActions } from "@/components/Header"; // ← ADD
 
 const API_BASE =
@@ -17,7 +17,12 @@ const API_BASE =
 const InboxAdditionPage = () => {
   const { setHeaderActions } = useHeaderActions(); // ← ADD
 
-  const [showPassword, setShowPassword] = useState({});
+const [showPassword, setShowPassword] = useState({});
+  const [savedAccounts, setSavedAccounts] = useState([]);
+  const [editingId, setEditingId] = useState(null);
+  const [accountSearch, setAccountSearch] = useState('');
+  const [accountPage, setAccountPage] = useState(1);
+  const ACCOUNT_PAGE_SIZE = 10;
   const [messagesPerDay, setMessagesPerDay] = useState([50]);
   const [timeBetweenEmails, setTimeBetweenEmails] = useState([10]);
 
@@ -117,7 +122,7 @@ const InboxAdditionPage = () => {
     return user.id || 1;
   };
 
-  const loadSavedData = async () => {
+const loadSavedData = async () => {
     try {
       const userId = getCurrentUserId();
       const res = await fetch(`${API_BASE}/details/${userId}`, {
@@ -128,37 +133,56 @@ const InboxAdditionPage = () => {
 
       if (!result.success || !result.data || result.data.length === 0) return;
 
-      const configs = result.data.map((d, index) => ({
-        id: Date.now() + index,
-        recordId: d.id,
-        fromName: d.from_name || '',
-        fromEmail: d.from_email || '',
-        smtpUsername: d.smtp_username || '',
-        smtpPassword: '',
-        smtpHost: d.smtp_host || '',
-        smtpPort: String(d.smtp_port || ''),
-        smtpSecurity: d.smtp_security || 'tls',
-        replyTo: d.reply_to || '',
-        imapUsername: d.imap_username || '',
-        imapPassword: '',
-        imapHost: d.imap_host || '',
-        imapPort: String(d.imap_port || '993'),
-        imapSecurity: d.imap_security || 'ssl',
-        signature: d.signature || ''
-      }));
+      // Only load into TABLE — do NOT fill the form
+      setSavedAccounts(result.data);
 
-      setEmailConfigs(configs);
-
-      const d0 = result.data[0];
-      setFormData({ useDifferentImap: d0.use_different_imap === 1 });
-      setMessagesPerDay([Number(d0.daily_limit) || 50]);
-      setTimeBetweenEmails([Number(d0.interval_minutes) || 10]);
     } catch (err) {
       console.error(err);
     }
   };
-
   useEffect(() => { loadSavedData(); }, []);
+
+  const handleEdit = (account) => {
+    setEditingId(account.id);
+    setEmailConfigs([{
+      id: Date.now(),
+      recordId: account.id,
+      fromName: account.from_name || '',
+      fromEmail: account.from_email || '',
+      smtpUsername: account.smtp_username || '',
+      smtpPassword: '',
+      smtpHost: account.smtp_host || '',
+      smtpPort: String(account.smtp_port || ''),
+      smtpSecurity: account.smtp_security || 'tls',
+      replyTo: account.reply_to || '',
+      imapUsername: account.imap_username || '',
+      imapPassword: '',
+      imapHost: account.imap_host || '',
+      imapPort: String(account.imap_port || '993'),
+      imapSecurity: account.imap_security || 'ssl',
+      signature: account.signature || ''
+    }]);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleDelete = async (accountId) => {
+    if (!window.confirm("⚠️ Are you sure you want to delete this account?")) return;
+    try {
+      const res = await fetch(`${API_BASE}/delete/${accountId}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      const result = await res.json();
+      if (result.success) {
+        alert("✅ Account deleted!");
+        await loadSavedData();
+      } else {
+        alert("❌ Failed: " + result.message);
+      }
+    } catch {
+      alert("❌ Error deleting.");
+    }
+  };
 
   const handleTestConnection = async (config) => {
     try {
@@ -194,7 +218,7 @@ const InboxAdditionPage = () => {
         if (!config.fromEmail) continue;
         const payload = {
           userId: user.id,
-          recordId: config.recordId,
+          recordId: editingId,
           fromName: config.fromName,
           fromEmail: config.fromEmail,
           smtpUsername: config.smtpUsername,
@@ -221,8 +245,16 @@ const InboxAdditionPage = () => {
         if (!response.ok) throw new Error("Save failed at server");
       }
 
-      alert("✅ All configurations saved successfully!");
+     alert("✅ All configurations saved successfully!");
       await loadSavedData();
+      setEditingId(null);
+      setEmailConfigs([{
+        id: Date.now(), recordId: null,
+        fromName: '', fromEmail: '', smtpUsername: '', smtpPassword: '',
+        smtpHost: '', smtpPort: '', smtpSecurity: 'tls', replyTo: '',
+        imapUsername: '', imapPassword: '', imapHost: '',
+        imapPort: '993', imapSecurity: 'ssl', signature: ''
+      }]);
     } catch (err) {
       console.error(err);
       alert("❌ Error while saving.");
@@ -231,20 +263,8 @@ const InboxAdditionPage = () => {
 
   // ── Inject buttons into global TopHeader ──────────────────────────────────
   useEffect(() => {
-    setHeaderActions([
-      {
-        label: "Add Email Account",
-        variant: "outline",
-        onClick: addEmailConfig,
-      },
-      {
-        label: "Save All Accounts",
-        variant: "default",
-        icon: <Save className="h-4 w-4" />,
-        onClick: handleSave,
-      },
-    ]);
-  }, [emailConfigs, formData, messagesPerDay, timeBetweenEmails]);
+    setHeaderActions([]);
+  }, []);
 
   return (
     // ── LOCAL <header> REMOVED — buttons now in global TopHeader ──
@@ -394,8 +414,7 @@ const InboxAdditionPage = () => {
                     </div>
                   </div>
                 </div>
-
-                {/* EMAIL SIGNATURE */}
+{/* EMAIL SIGNATURE */}
                 <div>
                   <h4 className="text-sm font-semibold text-gray-700 mb-2 border-b pb-2">
                     ✍️ Email Signature
@@ -410,6 +429,9 @@ const InboxAdditionPage = () => {
               </div>
             ))}
           </div>
+
+         
+               
 
           {/* EMAIL SETTINGS */}
           <div>
@@ -432,9 +454,130 @@ const InboxAdditionPage = () => {
             </div>
           </div>
 
+         
+
+      {/* SAVE BUTTON */}
+          <div className="flex justify-center pt-2 pb-4">
+            <Button
+              onClick={handleSave}
+              style={{ backgroundColor: '#1e3a8a', color: 'white' }}
+              className="flex items-center gap-2 px-6"
+            >
+             <Save className="h-4 w-4" />
+              {editingId ? 'Update Account' : 'Save All Accounts'}
+            </Button>
+          </div>
+
         </CardContent>
       </Card>
-    </main>
+
+     {/* DATABASE EMAIL ACCOUNTS TABLE */}
+      {savedAccounts.length > 0 && (
+        <div className="mt-6">
+          <Card className="w-full shadow-lg border bg-white overflow-hidden">
+            <div className="flex flex-row items-center justify-between p-4 border-b">
+              <h3 className="text-base font-bold">Database Email Accounts</h3>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="Search accounts..."
+                  value={accountSearch}
+                  onChange={e => { setAccountSearch(e.target.value); setAccountPage(1); }}
+                  className="border rounded px-3 py-1 text-sm w-52"
+                />
+                <Button size="sm" variant="outline" onClick={loadSavedData}>
+                  <RefreshCw className="h-4 w-4 mr-2" /> Reload
+                </Button>
+              </div>
+            </div>
+            <CardContent className="p-0">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b bg-gray-50">
+                      <th className="p-3 text-left font-semibold">Account</th>
+                      <th className="p-3 text-left font-semibold">SMTP Host</th>
+                      <th className="p-3 text-left font-semibold">Port</th>
+                      <th className="p-3 text-left font-semibold">Security</th>
+                      <th className="p-3 text-left font-semibold">IMAP Host</th>
+                      <th className="p-3 text-left font-semibold">Reply To</th>
+                      <th className="p-3 text-left font-semibold">ID</th>
+                      <th className="p-3 text-left font-semibold">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {savedAccounts
+                      .filter(a =>
+                        (a.from_name || '').toLowerCase().includes(accountSearch.toLowerCase()) ||
+                        (a.from_email || '').toLowerCase().includes(accountSearch.toLowerCase()) ||
+                        (a.smtp_host || '').toLowerCase().includes(accountSearch.toLowerCase())
+                      )
+                      .slice((accountPage - 1) * ACCOUNT_PAGE_SIZE, accountPage * ACCOUNT_PAGE_SIZE)
+                      .map((a, i) => (
+                        <tr key={a.id} className={`border-b ${i % 2 === 0 ? 'bg-white' : 'bg-gray-50'}`}>
+                          <td className="p-3">
+                            <p className="font-medium">{a.from_name || '-'}</p>
+                            <p className="text-xs text-gray-500">{a.from_email || '-'}</p>
+                          </td>
+                          <td className="p-3">{a.smtp_host || '-'}</td>
+                          <td className="p-3">{a.smtp_port || '-'}</td>
+                          <td className="p-3">
+                            <span className="px-2 py-1 rounded-full text-xs font-semibold bg-gray-800 text-white">
+                              {a.smtp_security?.toUpperCase() || '-'}
+                            </span>
+                          </td>
+                          <td className="p-3">{a.imap_host || '-'}</td>
+                          <td className="p-3">{a.reply_to || '-'}</td>
+                          <td className="p-3">{a.id}</td>
+                          <td className="p-3">
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => handleEdit(a)}
+                                className="text-blue-600 hover:text-blue-800 p-1 rounded"
+                                title="Edit"
+                              >✏️</button>
+                              <Button size="sm" variant="ghost"
+                                onClick={() => handleDelete(a.id)}>
+                                <Trash2 className="h-4 w-4 text-destructive" />
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {/* PAGINATION */}
+              {(() => {
+                const filtered = savedAccounts.filter(a =>
+                  (a.from_name || '').toLowerCase().includes(accountSearch.toLowerCase()) ||
+                  (a.from_email || '').toLowerCase().includes(accountSearch.toLowerCase()) ||
+                  (a.smtp_host || '').toLowerCase().includes(accountSearch.toLowerCase())
+                );
+                const totalPages = Math.ceil(filtered.length / ACCOUNT_PAGE_SIZE);
+                if (totalPages <= 1) return null;
+                return (
+                  <div className="flex items-center justify-between p-4 border-t">
+                    <div className="text-sm text-gray-500">
+                      Showing {((accountPage-1)*ACCOUNT_PAGE_SIZE)+1}–{Math.min(accountPage*ACCOUNT_PAGE_SIZE, filtered.length)} of {filtered.length}
+                    </div>
+                    <div className="flex gap-2">
+                      <Button size="sm" variant="outline" onClick={() => setAccountPage(p => Math.max(1, p-1))} disabled={accountPage === 1}>Previous</Button>
+                      {Array.from({ length: totalPages }, (_, i) => i+1).map(page => (
+                        <Button key={page} size="sm" variant={accountPage === page ? 'default' : 'outline'}
+                          onClick={() => setAccountPage(page)} className="min-w-10">{page}</Button>
+                      ))}
+                      <Button size="sm" variant="outline" onClick={() => setAccountPage(p => Math.min(totalPages, p+1))} disabled={accountPage === totalPages}>Next</Button>
+                    </div>
+                  </div>
+                );
+              })()}
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+    </main>    
   );
 };
 
