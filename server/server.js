@@ -35,7 +35,8 @@ app.use(
 /* ---------------- CORS ---------------- */
 app.use(
   cors({
-    origin: ['http://localhost:8080', 'http://localhost:5173'],
+    //origin: ['http://localhost:8080', 'http://localhost:5173'],
+    origin: ['http://localhost:8080', 'http://localhost:5173', 'https://krmail.speedtech.ai'],
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
@@ -50,7 +51,7 @@ app.use(session({
   saveUninitialized: false,
   cookie: {
     httpOnly: true,
-    secure: false,       // localhost only
+    secure: true,       // localhost only
     sameSite: 'lax'
   }
 }));
