@@ -3,7 +3,6 @@ const path = require("path");
 require("dotenv").config({ path: path.join(__dirname, "../.env") });
 
 const cron = require("node-cron");
-const moment = require("moment-timezone");
 
 const db = require("../db");
 const { createTransporter } = require("../helpers/mailer");
@@ -20,40 +19,7 @@ const DELAY_MS = 300;
 // 2 = claimed (in-progress) to prevent duplicate sends
 
 // ─────────────────────────────────────────────
-//  SENDING WINDOW CHECK (timezone + from/to)
-// ─────────────────────────────────────────────
-function isWithinSendingWindow(row) {
-  const tz = row.time_zone || "UTC";
-  const from = row.sending_from || "09:00";
-  const to = row.sending_to || "17:00";
-
-  const now = moment().tz(tz);
-  const start = moment.tz(
-    `${now.format("YYYY-MM-DD")} ${from}`,
-    "YYYY-MM-DD HH:mm",
-    tz
-  );
-  const end = moment.tz(
-    `${now.format("YYYY-MM-DD")} ${to}`,
-    "YYYY-MM-DD HH:mm",
-    tz
-  );
-
-  // overnight window (e.g., 22:00 -> 06:00)
-  if (end.isSameOrBefore(start)) {
-    return now.isSameOrAfter(start) || now.isBefore(end);
-  }
-
-  return now.isSameOrAfter(start) && now.isBefore(end);
-}
-
-// ─────────────────────────────────────────────
 //  FETCH ELIGIBLE FOLLOW-UP TARGETS
-//  - Delay supports decimals by using SECOND interval
-//  - Condition (not_opened/not_clicked/no_reply/always)
-//  - Unsubscribe guard
-//  - Excludes replied
-//  - DOES NOT enforce sending window here (done in JS, timezone-safe)
 // ─────────────────────────────────────────────
 async function fetchFollowupTargets(limit = MAX_PER_TICK) {
   const [rows] = await db.query(
@@ -75,11 +41,7 @@ async function fetchFollowupTargets(limit = MAX_PER_TICK) {
       ec.subject                           AS original_subject,
       ec.followup_condition                AS followup_condition,
       ec.followup_delay_hours              AS followup_delay_hours,
-
-      -- ✅ TIME SETTINGS (must exist in email_campaigns, add defaults in UI/db if not)
       ec.time_zone                         AS time_zone,
-      ec.sending_from                      AS sending_from,
-      ec.sending_to                        AS sending_to,
 
       ft.subject                           AS followup_subject,
       ft.content                           AS followup_body_html,
@@ -139,24 +101,22 @@ async function fetchFollowupTargets(limit = MAX_PER_TICK) {
   // ✅ followup_condition filter — 'not_opened', 'not_clicked', 'always', 'no_reply'
   return rows.filter((row) => {
     const condition = row.followup_condition || "always";
-    if (condition === "always") return true;
-    if (condition === "not_opened") return row.opened_at === null;
+    if (condition === "always")      return true;
+    if (condition === "not_opened")  return row.opened_at === null;
     if (condition === "not_clicked") return row.clicked_at === null;
-    if (condition === "no_reply") return row.replied_at === null;
+    if (condition === "no_reply")    return row.replied_at === null;
     return true;
   });
 }
 
 // ─────────────────────────────────────────────
-//  CLAIM ROW (prevents double-send if cron overlaps or multiple instances)
+//  CLAIM ROW (prevents double-send)
 // ─────────────────────────────────────────────
 async function claimFollowup(id) {
   const [res] = await db.query(
-    `
-    UPDATE campaign_data
-    SET follow_up_sent = 2
-    WHERE id = ? AND follow_up_sent = 0
-    `,
+    `UPDATE campaign_data
+     SET follow_up_sent = 2
+     WHERE id = ? AND follow_up_sent = 0`,
     [id]
   );
   return res.affectedRows === 1;
@@ -167,43 +127,38 @@ async function claimFollowup(id) {
 // ─────────────────────────────────────────────
 async function markFollowupSent(id) {
   await db.query(
-    `
-    UPDATE campaign_data
-    SET follow_up_sent    = 1,
-        follow_up_sent_at = NOW()
-    WHERE id = ?
-    `,
+    `UPDATE campaign_data
+     SET follow_up_sent    = 1,
+         follow_up_sent_at = NOW()
+     WHERE id = ?`,
     [id]
   );
 }
 
 // ─────────────────────────────────────────────
-//  RELEASE CLAIM (if send fails, allow retry next ticks)
+//  RELEASE CLAIM (allow retry on failure)
 // ─────────────────────────────────────────────
 async function releaseClaim(id) {
   await db.query(
-    `
-    UPDATE campaign_data
-    SET follow_up_sent = 0
-    WHERE id = ? AND follow_up_sent = 2
-    `,
+    `UPDATE campaign_data
+     SET follow_up_sent = 0
+     WHERE id = ? AND follow_up_sent = 2`,
     [id]
   );
 }
 
 function mergePlaceholders(content, lead) {
   let out = content || "";
-  const name = lead.name || "";
+  const name  = lead.name  || "";
   const email = lead.email || "";
 
   let payload = {};
   try {
-    payload =
-      lead.payload
-        ? typeof lead.payload === "string"
-          ? JSON.parse(lead.payload)
-          : lead.payload
-        : {};
+    payload = lead.payload
+      ? typeof lead.payload === "string"
+        ? JSON.parse(lead.payload)
+        : lead.payload
+      : {};
   } catch {
     payload = {};
   }
@@ -237,18 +192,15 @@ async function sendOneFollowup(row) {
   );
 
   // Tracking pixel
-  const trackingPixel = `<img src="${process.env.APP_URL}/api/track/open?cid=${row.campaign_id}&email=${encodeURIComponent(
-    row.email
-  )}&t=${Date.now()}" width="1" height="1" style="display:none" />`;
-  htmlBody += trackingPixel;
+  htmlBody += `<img src="${process.env.APP_URL}/api/track/open?cid=${row.campaign_id}&email=${encodeURIComponent(row.email)}&t=${Date.now()}" width="1" height="1" style="display:none" />`;
 
-  // Unsubscribe link (global)
+  // Unsubscribe link
   const token = sign({
-    email: normalizeEmail(row.email),
-    userId: row.user_id,
+    email:      normalizeEmail(row.email),
+    userId:     row.user_id,
     campaignId: row.campaign_id,
-    scope: "all",
-    exp: Date.now() + 365 * 24 * 60 * 60 * 1000,
+    scope:      "all",
+    exp:        Date.now() + 365 * 24 * 60 * 60 * 1000,
   });
 
   htmlBody += `
@@ -259,12 +211,12 @@ async function sendOneFollowup(row) {
     </p>`;
 
   const account = {
-    from_name: row.from_name,
-    email: row.from_email,
-    smtp_user: row.smtp_user,
+    from_name:    row.from_name,
+    email:        row.from_email,
+    smtp_user:    row.smtp_user,
     app_password: row.app_password,
-    smtp_host: row.smtp_host,
-    smtp_port: row.smtp_port,
+    smtp_host:    row.smtp_host,
+    smtp_port:    row.smtp_port,
     smtp_security: row.smtp_security,
   };
 
@@ -273,14 +225,14 @@ async function sendOneFollowup(row) {
   const extraHeaders = {};
   if (row.smtp_message_id) {
     extraHeaders["In-Reply-To"] = row.smtp_message_id;
-    extraHeaders["References"] = row.smtp_message_id;
+    extraHeaders["References"]  = row.smtp_message_id;
   }
 
   await transporter.sendMail({
-    from: `"${account.from_name || "Campaign"}" <${account.email}>`,
-    to: row.email,
+    from:    `"${account.from_name || "Campaign"}" <${account.email}>`,
+    to:      row.email,
     subject,
-    html: htmlBody,
+    html:    htmlBody,
     headers: extraHeaders,
   });
 }
@@ -301,20 +253,9 @@ async function runFollowups() {
 
     for (const row of targets) {
       try {
-        // ✅ Enforce sending hours + timezone
-        if (!isWithinSendingWindow(row)) {
-          console.log(
-            `⏳ Outside sending window (${row.time_zone || "UTC"} ${row.sending_from || "09:00"}-${row.sending_to || "17:00"}) → skip ${row.email}`
-          );
-          continue;
-        }
-
         // ✅ Claim row to prevent duplicate sending
         const claimed = await claimFollowup(row.id);
-        if (!claimed) {
-          // someone else already claimed/sent it
-          continue;
-        }
+        if (!claimed) continue;
 
         await sendOneFollowup(row);
         await markFollowupSent(row.id);
@@ -324,10 +265,7 @@ async function runFollowups() {
         );
       } catch (e) {
         console.error(`❌ Follow-up failed (cd.id=${row.id}):`, e.message);
-        // allow retry next tick
-        try {
-          await releaseClaim(row.id);
-        } catch (_) {}
+        try { await releaseClaim(row.id); } catch (_) {}
       }
 
       await new Promise((r) => setTimeout(r, DELAY_MS));
