@@ -14,26 +14,17 @@ async function q(sql, params = []) {
 
 /**
  * ✅ Convert MySQL DATETIME (JS Date object) to plain string "YYYY-MM-DD HH:MM:SS"
- *
- * Production server is IST (GMT+0530), so MySQL driver returns Date objects
- * with correct IST local time already. We just need to extract local time parts.
- *
- * Example: Date object = "Mon Mar 16 2026 15:35:00 GMT+0530"
- * → getHours() = 15, getMinutes() = 35  ✅ correct IST
- * → getUTCHours() = 10  ❌ wrong (UTC)
  */
 function toISTString(dt) {
   if (!dt) return null;
 
   const pad = (n) => String(n).padStart(2, "0");
 
-  // JS Date object — use LOCAL time methods (server is IST = correct)
   if (dt instanceof Date) {
     return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())} ` +
            `${pad(dt.getHours())}:${pad(dt.getMinutes())}:${pad(dt.getSeconds())}`;
   }
 
-  // Plain string — return as-is (already IST)
   const s = String(dt).trim();
   return s.replace("T", " ").replace(/\.\d+Z?$/, "");
 }
@@ -103,9 +94,6 @@ function normalizeFollowupCondition(raw) {
   return "not_opened";
 }
 
-/**
- * Placeholder merger — replaces {Name}, {name}, {{name}}, {Company}, {Signature} etc.
- */
 function mergePlaceholders(content, lead, payload = {}, signature = "") {
   let out = content;
 
@@ -133,25 +121,14 @@ function mergePlaceholders(content, lead, payload = {}, signature = "") {
   return out;
 }
 
-/**
- * ✅ parseRunAt — Frontend sends IST datetime string as-is "2026-03-16 14:21:00"
- * We store it directly in MySQL as IST (no UTC conversion).
- * Returns the string as-is for MySQL INSERT, or null if invalid.
- */
 function parseRunAt(runAt) {
   if (!runAt) return null;
   const s = String(runAt).trim();
-  // Validate: try parsing to check it's a real datetime
   const test = new Date(s.replace(" ", "T"));
   if (Number.isNaN(test.getTime())) return null;
-  // Return IST string as-is — MySQL stores it directly
-  return s; // e.g. "2026-03-16 14:21:00"
+  return s;
 }
 
-/**
- * ✅ IST datetime helper for follow-up queue
- * Returns current IST time + delayHours as MySQL datetime string
- */
 function getISTDatetimeAfterHours(delayHours) {
   const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
   const nowIST = new Date(Date.now() + IST_OFFSET_MS);
@@ -211,14 +188,9 @@ router.post("/", async (req, res) => {
       ? normalizeFollowupCondition(followupSettings?.condition) : null;
 
     const delayBetweenEmails = settings?.delayBetweenEmails != null ? toInt(settings.delayBetweenEmails) : 200;
-    const maxLevel           = settings?.maxLevel    != null ? toInt(settings.maxLevel)    : 100;
+    const maxLevel           = settings?.maxLevel != null ? toInt(settings.maxLevel) : 100;
+    const timezone           = settings?.timezone || "IST";
 
-    // ✅ Default timezone = IST
-    const timezone    = settings?.timezone              || "IST";
-    const sendingFrom = settings?.sendingHours?.from    || "09:00";
-    const sendingTo   = settings?.sendingHours?.to      || "17:00";
-
-    // ✅ scheduledAt = IST string as-is (e.g. "2026-03-16 14:21:00") or null
     const scheduledAt    = parseRunAt(runAt);
     const campaignStatus = scheduledAt ? "scheduled" : "draft";
 
@@ -228,8 +200,8 @@ router.post("/", async (req, res) => {
          status, scheduled_at, total_recipients,
          has_followup, followup_template_id,
          followup_subject, followup_delay_hours, followup_condition,
-         delay_ms, max_level, time_zone, sending_from, sending_to, inbox_account_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         delay_ms, max_level, time_zone, inbox_account_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         userId,
         name,
@@ -237,7 +209,7 @@ router.post("/", async (req, res) => {
         template.content || "",
         templateId || null,
         campaignStatus,
-        scheduledAt,           // ✅ IST string stored directly in MySQL
+        scheduledAt,
         leads.length,
         hasFollowup,
         followupTemplateId,
@@ -247,8 +219,6 @@ router.post("/", async (req, res) => {
         Number.isFinite(delayBetweenEmails) ? delayBetweenEmails : 200,
         Number.isFinite(maxLevel)           ? maxLevel           : 100,
         timezone,
-        sendingFrom,
-        sendingTo,
         inboxAccountId,
       ]
     );
@@ -324,7 +294,6 @@ router.get("/", async (req, res) => {
         clickedCount:     r.clicked_count,
         bouncedCount:     r.bounced_count,
         unsubscribedCount: Number(r.unsubscribed_count_live || 0),
-        // ✅ Convert MySQL Date objects to IST plain strings
         scheduledAt:      toISTString(r.scheduled_at),
         createdAt:        toISTString(r.created_at),
         delayMs:          r.delay_ms,
@@ -468,7 +437,6 @@ router.post("/:id/send", async (req, res) => {
     const userId = toInt(campaign.user_id);
     if (!userId) return res.status(400).json({ success: false, message: "Campaign has invalid user_id" });
 
-    // ✅ Fetch FRESH template content + subject
     const [[templateRow]] = await conn.query(
       `SELECT subject, content FROM email_templates WHERE id = ?`,
       [campaign.template_id]
@@ -481,7 +449,6 @@ router.post("/:id/send", async (req, res) => {
     const templateContent = templateRow.content;
     const emailSubject    = String(templateRow.subject?.trim() || campaign.subject || "");
 
-    // Mark unsubscribed before sending
     await conn.query(
       `UPDATE campaign_data cd
        JOIN unsubscribes u
@@ -496,7 +463,6 @@ router.post("/:id/send", async (req, res) => {
       [userId, campaignId]
     );
 
-    // Fetch pending leads
     const [leads] = await conn.query(
       `SELECT id, email, name, payload FROM campaign_data WHERE campaign_id = ? AND status = 'pending'`,
       [campaignId]
@@ -566,10 +532,8 @@ router.post("/:id/send", async (req, res) => {
         templateContent, lead, payloadObj, emailAccount.signature || ""
       );
 
-      // Tracking pixel
       emailContent += `<img src="${baseUrl}/api/track/open?cid=${campaignId}&email=${encodeURIComponent(lead.email)}&t=${Date.now()}" width="1" height="1" style="display:none" />`;
 
-      // Unsubscribe link
       const token = sign({
         email: emailNorm, userId, campaignId, scope: "all",
         exp: Date.now() + 1000 * 60 * 60 * 24 * 30,
@@ -603,11 +567,9 @@ router.post("/:id/send", async (req, res) => {
       );
       sentCount++;
 
-      // ✅ Schedule follow-up — use IST time
       if (campaign.has_followup && campaign.followup_template_id && campaign.followup_delay_hours != null) {
         try {
           const delayHours     = parseFloat(campaign.followup_delay_hours) || 24;
-          // ✅ IST datetime string for followup_queue
           const scheduledAtStr = getISTDatetimeAfterHours(delayHours);
 
           await conn.query(

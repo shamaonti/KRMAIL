@@ -53,32 +53,17 @@ interface Campaign {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/**
- * Convert datetime-local input value to DB string (IST as-is, no UTC conversion)
- * Input:  "2026-03-16T14:21"
- * Output: "2026-03-16 14:21:00"
- */
 function toDbDatetime(v: string): string {
   if (!v) return "";
   return v.replace("T", " ") + ":00";
 }
 
-/**
- * Display IST time correctly — handles 2 cases from MySQL/Node.js driver:
- *
- * Case A — UTC ISO string (MySQL driver auto-converts DATETIME to JS Date):
- *   "2026-03-16T09:32:00.000Z"  → add +5:30 → show 3:02 pm IST ✅
- *
- * Case B — Plain IST string (stored/returned as string):
- *   "2026-03-16 15:02:00"  → use directly as IST ✅
- */
 function formatDisplay(dt?: string | Date): string {
   if (!dt) return "-";
 
   const raw = String(dt).trim();
   const p   = (n: number) => String(n).padStart(2, "0");
 
-  // Case A: has Z or +offset → it's UTC, add IST offset to convert
   if (raw.endsWith("Z") || /[+-]\d{2}:\d{2}$/.test(raw)) {
     const istMs   = new Date(raw).getTime() + 5.5 * 60 * 60 * 1000;
     const istDate = new Date(istMs);
@@ -86,7 +71,6 @@ function formatDisplay(dt?: string | Date): string {
     return `${istDate.getUTCDate()}/${istDate.getUTCMonth() + 1}/${istDate.getUTCFullYear()}, ${h % 12 || 12}:${p(istDate.getUTCMinutes())} ${h >= 12 ? "pm" : "am"}`;
   }
 
-  // Case B: plain IST string "2026-03-16 15:02:00" — use as-is
   const s          = raw.replace("T", " ").replace(/\.\d+$/, "");
   const [dp = "", tp = ""] = s.split(" ");
   const [y = "", mo = "", d = ""] = dp.split("-");
@@ -96,15 +80,9 @@ function formatDisplay(dt?: string | Date): string {
   return `${parseInt(d)}/${parseInt(mo)}/${y}, ${h % 12 || 12}:${mi} ${h >= 12 ? "pm" : "am"}`;
 }
 
-/**
- * Min value for datetime-local input — current IST time
- * Works correctly on both local (IST) and production (UTC) servers
- * because we use IST offset manually
- */
 function localDatetimeMin(): string {
-  // Get current IST time regardless of server timezone
   const nowUTC = Date.now();
-  const istOffset = 5.5 * 60 * 60 * 1000; // +5:30
+  const istOffset = 5.5 * 60 * 60 * 1000;
   const istNow = new Date(nowUTC + istOffset);
   const p = (n: number) => String(n).padStart(2, "0");
   return `${istNow.getUTCFullYear()}-${p(istNow.getUTCMonth() + 1)}-${p(istNow.getUTCDate())}T${p(istNow.getUTCHours())}:${p(istNow.getUTCMinutes())}`;
@@ -158,10 +136,7 @@ const CampaignPage = () => {
   const [isLoadingCampaigns, setIsLoadingCampaigns] = useState(false);
   const [showLeadsDialog,    setShowLeadsDialog]    = useState(false);
 
-  // ✅ Default timezone = IST
   const [timezone,           setTimezone]           = useState('IST');
-  const [sendingHours,       setSendingHours]       = useState({ from: '09:00', to: '17:00' });
-
   const [abTesting,          setAbTesting]          = useState(false);
   const [delayBetweenEmails, setDelayBetweenEmails] = useState(200);
   const [maxLevel,           setMaxLevel]           = useState(100);
@@ -174,26 +149,6 @@ const CampaignPage = () => {
   const [selectedInboxIds,   setSelectedInboxIds]   = useState<number[]>([]);
   const [inboxDropdownOpen,  setInboxDropdownOpen]  = useState(false);
   const PAGE_SIZE = 10;
-
-  // ── Auto-sync sending hours from scheduleAt ────────────────────────────────
-  // scheduleAt = "2026-03-16T14:21" (IST time picked by user)
-  // From = that time, To = +8 hours
-  useEffect(() => {
-    if (!scheduleAt) return;
-    // Parse the datetime-local value as IST
-    // "2026-03-16T14:21" split to get hours/minutes directly
-    const timePart = scheduleAt.split("T")[1] || "09:00";
-    const [hStr, mStr] = timePart.split(":");
-    const fromH = parseInt(hStr, 10);
-    const fromM = parseInt(mStr, 10);
-    const p = (n: number) => String(n).padStart(2, "0");
-
-    const toTotalMins = fromH * 60 + fromM + 8 * 60;
-    const toH = Math.floor(toTotalMins / 60) % 24;
-    const toM = toTotalMins % 60;
-
-    setSendingHours({ from: `${p(fromH)}:${p(fromM)}`, to: `${p(toH)}:${p(toM)}` });
-  }, [scheduleAt]);
 
   const userId = (() => {
     const u = safeJsonParse<{ id?: number }>(localStorage.getItem('user'), {});
@@ -310,9 +265,8 @@ const CampaignPage = () => {
         template:   selectedTemplate,
         leads,
         inboxAccountId: selectedInboxIds.join(','),
-        // ✅ Send IST datetime string as-is (no UTC conversion)
         runAt: scheduleAt ? toDbDatetime(scheduleAt) : null,
-        settings: { timezone, sendingHours, abTesting, delayBetweenEmails, maxLevel },
+        settings: { timezone, abTesting, delayBetweenEmails, maxLevel },
         followupSettings: followupEnabled
           ? {
               enabled:    true,
@@ -344,7 +298,6 @@ const CampaignPage = () => {
           followupSettings: campaignData.followupSettings,
         });
         await loadCampaigns();
-        // ✅ Show IST time in success message
         setSuccessMessage(scheduleAt
           ? `Scheduled for ${formatDisplay(toDbDatetime(scheduleAt))}`
           : 'Campaign saved successfully!');
@@ -671,7 +624,7 @@ const CampaignPage = () => {
               <CardHeader><CardTitle>Settings</CardTitle></CardHeader>
               <CardContent className="space-y-4">
 
-                {/* Time Zone — IST default */}
+                {/* Time Zone */}
                 <div className="space-y-2">
                   <Label>Time Zone</Label>
                   <Select value={timezone} onValueChange={setTimezone}>
@@ -684,28 +637,6 @@ const CampaignPage = () => {
                       <SelectItem value="GMT">GMT</SelectItem>
                     </SelectContent>
                   </Select>
-                </div>
-
-                {/* Sending Hours — auto-set from scheduleAt */}
-                <div className="space-y-2">
-                  <Label>Sending Hours (IST)</Label>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <Label className="text-sm">From</Label>
-                      <Input type="time" value={sendingHours.from}
-                        onChange={e => setSendingHours(p => ({ ...p, from: e.target.value }))} />
-                    </div>
-                    <div>
-                      <Label className="text-sm">To</Label>
-                      <Input type="time" value={sendingHours.to}
-                        onChange={e => setSendingHours(p => ({ ...p, to: e.target.value }))} />
-                    </div>
-                  </div>
-                  {scheduleAt && (
-                    <p className="text-xs text-blue-600">
-                      ℹ️ Auto-set from schedule time (+8 hrs window)
-                    </p>
-                  )}
                 </div>
 
                 {/* A/B Testing */}
@@ -834,10 +765,7 @@ const CampaignPage = () => {
                             <TableCell className="text-center">{c.sentCount   ?? 0}</TableCell>
                             <TableCell className="text-center">{c.openedCount ?? 0}</TableCell>
                             <TableCell className="text-center">{c.clickedCount ?? 0}</TableCell>
-                            <TableCell>
-                              {/* createdAt from DB is also IST plain string */}
-                              {formatDisplay(c.createdAt)}
-                            </TableCell>
+                            <TableCell>{formatDisplay(c.createdAt)}</TableCell>
                             <TableCell>
                               <div className="flex items-center gap-1">
                                 {(c.status === 'draft' || c.status === 'scheduled') && (
