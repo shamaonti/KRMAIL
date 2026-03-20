@@ -106,45 +106,41 @@ class EmailScheduler {
   }
 
   /**
-   * ✅ Schedule a follow-up into followup_queue using IST datetime
+   * ✅ Schedule ALL followup steps into followup_queue using IST datetime
    */
-  async scheduleFollowup(conn, { campaign, lead }) {
+  async scheduleFollowup(conn, { campaign, lead, followupSteps = [] }) {
     try {
-      if (
-        !campaign.has_followup         ||
-        !campaign.followup_template_id ||
-        campaign.followup_delay_hours == null
-      ) return;
+      if (!campaign.has_followup || !followupSteps.length) return;
 
-      const delayHours = parseFloat(campaign.followup_delay_hours) || 0;
+      for (const step of followupSteps) {
+        const delayHours     = (step.delay_days || 1) * 24;
+        const scheduledAtStr = getISTDatetimeAfterHours(delayHours);
 
-      // ✅ IST datetime string — correct on both local and production server
-      const scheduledAtStr = getISTDatetimeAfterHours(delayHours);
+        await conn.query(
+          `INSERT INTO followup_queue
+             (campaign_id, user_id, email,
+              followup_template_id, followup_subject,
+              scheduled_at, \`condition\`, followup_order, status,
+              created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', NOW(), NOW())`,
+          [
+            campaign.id,
+            campaign.user_id,
+            lead.email,
+            step.id,
+            step.subject || null,
+            scheduledAtStr,
+            step.send_condition || "not_opened",
+            step.followup_order || 1,
+          ]
+        );
 
-      await conn.query(
-        `INSERT INTO followup_queue
-           (campaign_id, user_id, email,
-            followup_template_id, followup_subject,
-            scheduled_at, \`condition\`, status,
-            created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', NOW(), NOW())`,
-        [
-          campaign.id,
-          campaign.user_id,
-          lead.email,
-          campaign.followup_template_id,
-          campaign.followup_subject || null,
-          scheduledAtStr,                           // ✅ IST datetime
-          campaign.followup_condition || "not_opened",
-        ]
-      );
-
-      console.log(
-        `📅 Follow-up scheduled → ${lead.email} at ${scheduledAtStr} IST ` +
-        `(+${delayHours}h, condition: ${campaign.followup_condition || "not_opened"})`
-      );
+        console.log(
+          `📅 Followup #${step.followup_order} queued → ${lead.email} at ${scheduledAtStr} IST`
+        );
+      }
     } catch (err) {
-      console.error(`⚠️ Failed to schedule follow-up for ${lead.email}:`, err.message);
+      console.error(`⚠️ Failed to schedule followups for ${lead.email}:`, err.message);
     }
   }
 
@@ -310,8 +306,7 @@ class EmailScheduler {
     console.log(`⚙️ Settings: max_level=${maxLevel}, delay_ms=${delayMs}ms`);
     if (campaign.has_followup) {
       console.log(
-        `📬 Follow-up: enabled | template_id=${campaign.followup_template_id} | ` +
-        `delay=${campaign.followup_delay_hours}h | condition=${campaign.followup_condition}`
+        `📬 Follow-up: enabled | template_id=${campaign.followup_template_id}`
       );
     }
 
@@ -376,6 +371,19 @@ class EmailScheduler {
         `UPDATE email_campaigns SET subject = ?, status = 'sending', updated_at = NOW() WHERE id = ?`,
         [emailSubject, campaign.id]
       );
+
+      // ✅ Followup steps ek baar fetch karo — batch loop se PEHLE
+      let followupSteps = [];
+      if (campaign.has_followup && campaign.template_id) {
+        [followupSteps] = await conn.query(
+          `SELECT id, followup_order, delay_days, send_condition, subject
+           FROM email_templates
+           WHERE parent_template_id = ?
+           ORDER BY followup_order ASC`,
+          [campaign.template_id]
+        );
+        console.log(`📋 ${followupSteps.length} followup step(s) found for template ${campaign.template_id}`);
+      }
 
       // ─── Batch sending loop ───────────────────────────────────────────
       while (true) {
@@ -487,10 +495,10 @@ class EmailScheduler {
             totalSent++;
             console.log(`✅ [${batchSent}/${distribution.length}] ${lead.email} ← ${account.email}`);
 
-            // ✅ Schedule follow-up using IST datetime
-            if (campaign.has_followup) {
-              await this.scheduleFollowup(conn, { campaign, lead });
-              totalFollowups++;
+            // ✅ Saare followup steps queue mein daalo
+            if (followupSteps.length > 0) {
+              await this.scheduleFollowup(conn, { campaign, lead, followupSteps });
+              totalFollowups += followupSteps.length;
             }
 
             await this.delay(delayMs);
