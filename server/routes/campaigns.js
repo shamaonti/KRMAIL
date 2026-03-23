@@ -12,6 +12,23 @@ async function q(sql, params = []) {
   return rows;
 }
 
+/**
+ * ✅ Convert MySQL DATETIME (JS Date object) to plain string "YYYY-MM-DD HH:MM:SS"
+ */
+function toISTString(dt) {
+  if (!dt) return null;
+
+  const pad = (n) => String(n).padStart(2, "0");
+
+  if (dt instanceof Date) {
+    return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())} ` +
+           `${pad(dt.getHours())}:${pad(dt.getMinutes())}:${pad(dt.getSeconds())}`;
+  }
+
+  const s = String(dt).trim();
+  return s.replace("T", " ").replace(/\.\d+Z?$/, "");
+}
+
 function toInt(value) {
   const n = Number.parseInt(String(value), 10);
   return Number.isFinite(n) ? n : null;
@@ -44,10 +61,10 @@ function extractName(lead) {
     return lead[nameKey].trim();
   }
   const firstKey = keys.find(k => k.toLowerCase() === "firstname" || k.toLowerCase() === "first_name");
-  const lastKey = keys.find(k => k.toLowerCase() === "lastname" || k.toLowerCase() === "last_name");
+  const lastKey  = keys.find(k => k.toLowerCase() === "lastname"  || k.toLowerCase() === "last_name");
   const first = firstKey ? String(lead[firstKey] || "").trim() : "";
-  const last = lastKey ? String(lead[lastKey] || "").trim() : "";
-  const full = `${first} ${last}`.trim();
+  const last  = lastKey  ? String(lead[lastKey]  || "").trim() : "";
+  const full  = `${first} ${last}`.trim();
   if (full) return full;
   return null;
 }
@@ -70,24 +87,18 @@ function getFollowupSettings(body) {
 function normalizeFollowupCondition(raw) {
   const v = String(raw || "").trim().toLowerCase();
   if (v === "not_opened" || v === "not_clicked" || v === "always" || v === "no_reply") return v;
-  if (v.includes("not opened")) return "not_opened";
+  if (v.includes("not opened"))  return "not_opened";
   if (v.includes("not clicked")) return "not_clicked";
-  if (v.includes("always")) return "always";
-  if (v.includes("no reply")) return "no_reply";
+  if (v.includes("always"))      return "always";
+  if (v.includes("no reply"))    return "no_reply";
   return "not_opened";
 }
 
-/**
- * ✅ Placeholder merger — replaces {Name}, {name}, {{name}}, {Company}, {Signature} etc.
- * Handles both single-brace {key} and double-brace {{key}} syntax, case-insensitive.
- */
 function mergePlaceholders(content, lead, payload = {}, signature = "") {
   let out = content;
 
   const name  = lead.name  || payload.name  || payload.Name  || "";
   const email = lead.email || payload.email || payload.Email || "";
-
-  // Collect all payload fields for replacement
   const sigHtml = signature ? String(signature).replace(/\n/g, "<br>") : "";
 
   const allFields = {
@@ -97,17 +108,14 @@ function mergePlaceholders(content, lead, payload = {}, signature = "") {
     signature: sigHtml,
   };
 
-  // Merge all payload keys so any CSV column like {Company}, {Phone} etc. works
   for (const [k, v] of Object.entries(payload)) {
     allFields[k] = String(v || "");
   }
 
   for (const [key, value] of Object.entries(allFields)) {
     const safe = String(value || "");
-    // Replace {{key}} (double brace)
     out = out.replace(new RegExp(`\\{\\{\\s*${key}\\s*\\}\\}`, "gi"), safe);
-    // Replace {key} (single brace)
-    out = out.replace(new RegExp(`\\{\\s*${key}\\s*\\}`, "gi"), safe);
+    out = out.replace(new RegExp(`\\{\\s*${key}\\s*\\}`,       "gi"), safe);
   }
 
   return out;
@@ -115,16 +123,22 @@ function mergePlaceholders(content, lead, payload = {}, signature = "") {
 
 function parseRunAt(runAt) {
   if (!runAt) return null;
-  const dt = new Date(runAt);
-  if (!Number.isNaN(dt.getTime())) return dt;
-
-  // Accept "YYYY-MM-DD HH:mm:ss" from frontend helper as local server time.
-  const normalized = String(runAt).trim().replace(" ", "T");
-  const fallback = new Date(normalized);
-  if (!Number.isNaN(fallback.getTime())) return fallback;
-  return null;
+  const s = String(runAt).trim();
+  const test = new Date(s.replace(" ", "T"));
+  if (Number.isNaN(test.getTime())) return null;
+  return s;
 }
 
+function getISTDatetimeAfterHours(delayHours) {
+  const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+  const nowIST = new Date(Date.now() + IST_OFFSET_MS);
+  const futureIST = new Date(nowIST.getTime() + delayHours * 60 * 60 * 1000);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${futureIST.getUTCFullYear()}-${pad(futureIST.getUTCMonth() + 1)}-${pad(futureIST.getUTCDate())} ` +
+         `${pad(futureIST.getUTCHours())}:${pad(futureIST.getUTCMinutes())}:${pad(futureIST.getUTCSeconds())}`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 /**
  * CREATE CAMPAIGN
  * POST /api/campaigns
@@ -145,18 +159,12 @@ router.post("/", async (req, res) => {
     } = req.body;
 
     const followupSettings = getFollowupSettings(req.body);
-    // ADD THESE TWO LINES 👇
-console.log('🔍 followupSettings:', JSON.stringify(followupSettings));
-console.log('🔍 followupEnabled:', toBool(followupSettings?.enabled));
-    const inboxAccountId = req.body.inboxAccountId || null;
+    const inboxAccountId   = req.body.inboxAccountId || null;
 
-    const userId = toInt(userIdRaw);
+    const userId     = toInt(userIdRaw);
     const templateId = templateIdRaw != null ? toInt(templateIdRaw) : null;
 
-    // ✅ Subject comes from template object
-    const subject = String(
-      req.body.subject || template?.subject || ""
-    ).trim();
+    const subject = String(req.body.subject || template?.subject || "").trim();
 
     if (!userId || !name || !subject || !template || !Array.isArray(leads)) {
       await conn.rollback();
@@ -168,51 +176,32 @@ console.log('🔍 followupEnabled:', toBool(followupSettings?.enabled));
       return res.status(400).json({ success: false, message: "Leads list is empty" });
     }
 
-    const followupEnabled = toBool(followupSettings?.enabled);
-    const hasFollowup = followupEnabled ? 1 : 0;
-    console.log('🔍 hasFollowup:', hasFollowup, 'followupEnabled:', followupEnabled, 'settings:', JSON.stringify(followupSettings));
-
-    const followupDelayHours =
-      followupEnabled && followupSettings?.delayHours != null
-        ? toFloat(followupSettings.delayHours)
-        : null;
-
-    const followupTemplateId =
-      followupEnabled 
-        ? (toInt(followupSettings?.steps?.[0]?.id) || toInt(followupSettings?.templateId) || null) 
-        : null;
-    // ✅ Followup subject from followup template object first
-    const followupSubject = followupEnabled
-      ? String(
-          followupSettings?.template?.subject ||
-          followupSettings?.subject ||
-          ""
-        ).trim() || null
+    const followupEnabled    = toBool(followupSettings?.enabled);
+    const hasFollowup        = followupEnabled ? 1 : 0;
+    const followupDelayHours = followupEnabled && followupSettings?.delayHours != null
+      ? toFloat(followupSettings.delayHours) : null;
+    const followupTemplateId = followupEnabled ? (toInt(followupSettings?.templateId) || null) : null;
+    const followupSubject    = followupEnabled
+      ? String(followupSettings?.template?.subject || followupSettings?.subject || "").trim() || null
       : null;
+    const followupCondition  = followupEnabled
+      ? normalizeFollowupCondition(followupSettings?.condition) : null;
 
-    const followupCondition =
-      followupEnabled ? normalizeFollowupCondition(followupSettings?.condition) : null;
+    const delayBetweenEmails = settings?.delayBetweenEmails != null ? toInt(settings.delayBetweenEmails) : 200;
+    const maxLevel           = settings?.maxLevel != null ? toInt(settings.maxLevel) : 100;
+    const timezone           = settings?.timezone || "IST";
 
-    const delayBetweenEmails =
-      settings?.delayBetweenEmails != null ? toInt(settings.delayBetweenEmails) : 200;
-
-    const maxLevel = settings?.maxLevel != null ? toInt(settings.maxLevel) : 100;
-
-    const timezone = settings?.timezone || "UTC";
-    const sendingFrom = settings?.sendingHours?.from || "09:00";
-    const sendingTo = settings?.sendingHours?.to || "17:00";
-
-    const scheduledAt = parseRunAt(runAt);
+    const scheduledAt    = parseRunAt(runAt);
     const campaignStatus = scheduledAt ? "scheduled" : "draft";
 
     const [result] = await conn.query(
       `INSERT INTO email_campaigns
-      (user_id, name, subject, content, template_id,
-        status, scheduled_at, total_recipients,
-        has_followup, followup_template_id,
-        followup_subject, followup_delay_hours, followup_condition,
-        delay_ms, max_level, time_zone, sending_from, sending_to,inbox_account_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?)`,
+        (user_id, name, subject, content, template_id,
+         status, scheduled_at, total_recipients,
+         has_followup, followup_template_id,
+         followup_subject, followup_delay_hours, followup_condition,
+         delay_ms, max_level, time_zone, inbox_account_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         userId,
         name,
@@ -228,27 +217,17 @@ console.log('🔍 followupEnabled:', toBool(followupSettings?.enabled));
         followupDelayHours,
         followupCondition,
         Number.isFinite(delayBetweenEmails) ? delayBetweenEmails : 200,
-        Number.isFinite(maxLevel) ? maxLevel : 100,
+        Number.isFinite(maxLevel)           ? maxLevel           : 100,
         timezone,
-        sendingFrom,
-        sendingTo,
-        inboxAccountId
+        inboxAccountId,
       ]
     );
 
     const campaignId = result.insertId;
 
     const values = leads
-      .filter((l) => {
-        const email = extractEmail(l);
-        return email && email.trim();
-      })
-      .map((l) => [
-        campaignId,
-        extractEmail(l).trim(),
-        extractName(l),
-        JSON.stringify(l),
-      ]);
+      .filter(l => { const e = extractEmail(l); return e && e.trim(); })
+      .map(l => [campaignId, extractEmail(l).trim(), extractName(l), JSON.stringify(l)]);
 
     if (values.length === 0) {
       await conn.rollback();
@@ -262,6 +241,7 @@ console.log('🔍 followupEnabled:', toBool(followupSettings?.enabled));
 
     await conn.commit();
     return res.status(201).json({ success: true, campaignId });
+
   } catch (err) {
     await conn.rollback();
     console.error("Create campaign error:", err);
@@ -271,6 +251,7 @@ console.log('🔍 followupEnabled:', toBool(followupSettings?.enabled));
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
 /**
  * GET ALL CAMPAIGNS
  * GET /api/campaigns?userId=1
@@ -286,17 +267,13 @@ router.get("/", async (req, res) => {
           ec.total_recipients, ec.sent_count,
           ec.opened_count, ec.clicked_count, ec.bounced_count,
           ec.scheduled_at, ec.created_at, ec.delay_ms, ec.max_level,
-
           ec.has_followup, ec.followup_template_id, ec.followup_subject,
           ec.followup_delay_hours, ec.followup_condition,
-
           (
             SELECT COUNT(*)
             FROM campaign_data cd
-            WHERE cd.campaign_id = ec.id
-              AND cd.status = 'unsubscribed'
+            WHERE cd.campaign_id = ec.id AND cd.status = 'unsubscribed'
           ) AS unsubscribed_count_live
-
        FROM email_campaigns ec
        WHERE ec.user_id = ?
        ORDER BY ec.created_at DESC`,
@@ -305,28 +282,27 @@ router.get("/", async (req, res) => {
 
     return res.json({
       success: true,
-      data: rows.map((r) => ({
-        id: r.id,
-        userId: r.user_id,
-        name: r.name,
-        subject: r.subject,
-        status: r.status,
-        totalRecipients: r.total_recipients,
-        sentCount: r.sent_count,
-        openedCount: r.opened_count,
-        clickedCount: r.clicked_count,
-        bouncedCount: r.bounced_count,
+      data: rows.map(r => ({
+        id:               r.id,
+        userId:           r.user_id,
+        name:             r.name,
+        subject:          r.subject,
+        status:           r.status,
+        totalRecipients:  r.total_recipients,
+        sentCount:        r.sent_count,
+        openedCount:      r.opened_count,
+        clickedCount:     r.clicked_count,
+        bouncedCount:     r.bounced_count,
         unsubscribedCount: Number(r.unsubscribed_count_live || 0),
-        scheduledAt: r.scheduled_at,
-        createdAt: r.created_at,
-        delayMs: r.delay_ms,
-        maxLevel: r.max_level,
-
-        hasFollowup: r.has_followup,
-        followupTemplateId: r.followup_template_id,
-        followupSubject: r.followup_subject,
-        followupDelayHours: r.followup_delay_hours,
-        followupCondition: r.followup_condition,
+        scheduledAt:      toISTString(r.scheduled_at),
+        createdAt:        toISTString(r.created_at),
+        delayMs:          r.delay_ms,
+        maxLevel:         r.max_level,
+        hasFollowup:         r.has_followup,
+        followupTemplateId:  r.followup_template_id,
+        followupSubject:     r.followup_subject,
+        followupDelayHours:  r.followup_delay_hours,
+        followupCondition:   r.followup_condition,
       })),
     });
   } catch (err) {
@@ -335,6 +311,7 @@ router.get("/", async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
 /**
  * UPDATE CAMPAIGN STATUS / COUNTS
  * PUT /api/campaigns/:id
@@ -344,18 +321,17 @@ router.put("/:id", async (req, res) => {
     const id = toInt(req.params.id);
     if (!id) return res.status(400).json({ success: false, message: "Invalid campaign ID" });
 
-    const { status, sentCount, openedCount, clickedCount, bouncedCount, unsubscribedCount } =
-      req.body;
+    const { status, sentCount, openedCount, clickedCount, bouncedCount, unsubscribedCount } = req.body;
 
     await db.query(
       `UPDATE email_campaigns
-       SET status        = COALESCE(?, status),
-           sent_count    = COALESCE(?, sent_count),
-           opened_count  = COALESCE(?, opened_count),
-           clicked_count = COALESCE(?, clicked_count),
-           bounced_count = COALESCE(?, bounced_count),
+       SET status             = COALESCE(?, status),
+           sent_count         = COALESCE(?, sent_count),
+           opened_count       = COALESCE(?, opened_count),
+           clicked_count      = COALESCE(?, clicked_count),
+           bounced_count      = COALESCE(?, bounced_count),
            unsubscribed_count = COALESCE(?, unsubscribed_count),
-           updated_at    = NOW()
+           updated_at         = NOW()
        WHERE id = ?`,
       [status, sentCount, openedCount, clickedCount, bouncedCount, unsubscribedCount, id]
     );
@@ -367,6 +343,7 @@ router.put("/:id", async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
 /**
  * DELETE CAMPAIGN
  */
@@ -383,6 +360,7 @@ router.delete("/:id", async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
 /**
  * GET SINGLE CAMPAIGN
  */
@@ -392,13 +370,11 @@ router.get("/:id", async (req, res) => {
     if (!id) return res.status(400).json({ success: false, message: "Invalid campaign ID" });
 
     const rows = await q(
-      `SELECT
-         ec.*,
+      `SELECT ec.*,
          (
            SELECT COUNT(*)
            FROM campaign_data cd
-           WHERE cd.campaign_id = ec.id
-             AND cd.status = 'unsubscribed'
+           WHERE cd.campaign_id = ec.id AND cd.status = 'unsubscribed'
          ) AS unsubscribed_count_live
        FROM email_campaigns ec
        WHERE ec.id = ?`,
@@ -412,29 +388,28 @@ router.get("/:id", async (req, res) => {
     return res.json({
       success: true,
       data: {
-        id: c.id,
-        userId: c.user_id,
-        name: c.name,
-        subject: c.subject,
-        content: c.content,
-        templateId: c.template_id,
-        status: c.status,
-        totalRecipients: c.total_recipients,
-        sentCount: c.sent_count,
-        openedCount: c.opened_count,
-        clickedCount: c.clicked_count,
-        bouncedCount: c.bounced_count,
+        id:               c.id,
+        userId:           c.user_id,
+        name:             c.name,
+        subject:          c.subject,
+        content:          c.content,
+        templateId:       c.template_id,
+        status:           c.status,
+        totalRecipients:  c.total_recipients,
+        sentCount:        c.sent_count,
+        openedCount:      c.opened_count,
+        clickedCount:     c.clicked_count,
+        bouncedCount:     c.bounced_count,
         unsubscribedCount: Number(c.unsubscribed_count_live || 0),
-        scheduledAt: c.scheduled_at,
-        createdAt: c.created_at,
-
-        hasFollowup: c.has_followup,
-        followupTemplateId: c.followup_template_id,
-        followupSubject: c.followup_subject,
-        followupDelayHours: c.followup_delay_hours,
-        followupCondition: c.followup_condition,
-        delayMs: c.delay_ms,
-        maxLevel: c.max_level,
+        scheduledAt:      toISTString(c.scheduled_at),
+        createdAt:        toISTString(c.created_at),
+        hasFollowup:         c.has_followup,
+        followupTemplateId:  c.followup_template_id,
+        followupSubject:     c.followup_subject,
+        followupDelayHours:  c.followup_delay_hours,
+        followupCondition:   c.followup_condition,
+        delayMs:          c.delay_ms,
+        maxLevel:         c.max_level,
       },
     });
   } catch (err) {
@@ -443,8 +418,9 @@ router.get("/:id", async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
 /**
- * ✅ MANUAL SEND
+ * MANUAL SEND
  * POST /api/campaigns/:id/send
  */
 router.post("/:id/send", async (req, res) => {
@@ -453,13 +429,14 @@ router.post("/:id/send", async (req, res) => {
     const campaignId = toInt(req.params.id);
     if (!campaignId) return res.status(400).json({ success: false, message: "Invalid campaign ID" });
 
-    const [[campaign]] = await conn.query(`SELECT * FROM email_campaigns WHERE id = ?`, [campaignId]);
+    const [[campaign]] = await conn.query(
+      `SELECT * FROM email_campaigns WHERE id = ?`, [campaignId]
+    );
     if (!campaign) return res.status(404).json({ success: false, message: "Campaign not found" });
 
     const userId = toInt(campaign.user_id);
     if (!userId) return res.status(400).json({ success: false, message: "Campaign has invalid user_id" });
 
-    // ✅ Fetch FRESH template content + subject from email_templates (not stale campaign.content)
     const [[templateRow]] = await conn.query(
       `SELECT subject, content FROM email_templates WHERE id = ?`,
       [campaign.template_id]
@@ -470,10 +447,8 @@ router.post("/:id/send", async (req, res) => {
     }
 
     const templateContent = templateRow.content;
-    // Subject: always from template (fresh), fallback to campaign.subject
-    const emailSubject = String(templateRow.subject?.trim() || campaign.subject || "");
+    const emailSubject    = String(templateRow.subject?.trim() || campaign.subject || "");
 
-    // Mark unsubscribed before sending
     await conn.query(
       `UPDATE campaign_data cd
        JOIN unsubscribes u
@@ -481,22 +456,15 @@ router.post("/:id/send", async (req, res) => {
         AND u.user_id = ?
         AND (
               u.scope = 'all'
-              OR (
-                u.scope = 'campaign'
-                AND CAST(u.campaign_id AS UNSIGNED) = CAST(cd.campaign_id AS UNSIGNED)
-              )
+              OR (u.scope = 'campaign' AND CAST(u.campaign_id AS UNSIGNED) = CAST(cd.campaign_id AS UNSIGNED))
             )
        SET cd.status = 'unsubscribed'
-       WHERE cd.campaign_id = ?
-         AND cd.status = 'pending'`,
+       WHERE cd.campaign_id = ? AND cd.status = 'pending'`,
       [userId, campaignId]
     );
 
-    // ✅ Fetch pending leads WITH payload so we can merge placeholders
     const [leads] = await conn.query(
-      `SELECT id, email, name, payload
-       FROM campaign_data
-       WHERE campaign_id = ? AND status = 'pending'`,
+      `SELECT id, email, name, payload FROM campaign_data WHERE campaign_id = ? AND status = 'pending'`,
       [campaignId]
     );
 
@@ -512,31 +480,24 @@ router.post("/:id/send", async (req, res) => {
       );
       return res.json({ success: true, sentCount: 0, skippedUnsub: unsubCount });
     }
-    console.log('📨 inboxAccountId received:', req.body.inboxAccountId);
-    console.log('📨 userId:', userId);
 
-    const inboxIds = (req.body.inboxAccountId || '').split(',').map(Number).filter(Boolean);
-    // ✅ Fetch sender email account (with signature)
+    const inboxIds = (req.body.inboxAccountId || campaign.inbox_account_id || '')
+      .split(',').map(Number).filter(Boolean);
+
     const [emailAccounts] = await conn.query(
       `SELECT
-         id,
-         from_name,
-         from_email        AS email,
-         smtp_username     AS smtp_user,
-         smtp_password     AS app_password,
-         smtp_host,
-         smtp_port,
-         smtp_security,
-         signature,
-         daily_limit
+         id, from_name,
+         from_email    AS email,
+         smtp_username AS smtp_user,
+         smtp_password AS app_password,
+         smtp_host, smtp_port, smtp_security,
+         signature, daily_limit
        FROM user_email_accounts
        WHERE user_id = ?
        ${inboxIds.length > 0 ? `AND id IN (${inboxIds.map(() => '?').join(',')})` : ''}
        ORDER BY id DESC`,
       inboxIds.length > 0 ? [userId, ...inboxIds] : [userId]
     );
-
-    console.log('📨 emailAccounts found:', emailAccounts.map(a => a.email));
 
     if (!emailAccounts.length) {
       return res.status(400).json({ success: false, message: "No email account configured for this user" });
@@ -549,7 +510,20 @@ router.post("/:id/send", async (req, res) => {
       [emailSubject, campaignId]
     );
 
-    let sentCount = 0;
+    // ✅ Followup steps ek baar fetch karo — leads loop se PEHLE
+    let followupSteps = [];
+    if (campaign.has_followup && campaign.template_id) {
+      [followupSteps] = await conn.query(
+        `SELECT id, followup_order, delay_days, send_condition, subject
+         FROM email_templates
+         WHERE parent_template_id = ?
+         ORDER BY followup_order ASC`,
+        [campaign.template_id]
+      );
+      console.log(`📋 ${followupSteps.length} followup step(s) found for template ${campaign.template_id}`);
+    }
+
+    let sentCount    = 0;
     let accountIndex = 0;
 
     for (const lead of leads) {
@@ -558,41 +532,25 @@ router.post("/:id/send", async (req, res) => {
       const emailAccount = emailAccounts[accountIndex % emailAccounts.length];
       accountIndex++;
       const transporter = createTransporter(emailAccount);
+      const emailNorm   = normEmail(lead.email);
 
-      const emailNorm = normEmail(lead.email);
-
-      // ✅ Parse payload JSON for placeholder values (CSV columns like Company, Phone etc.)
       let payloadObj = {};
       try {
         payloadObj = lead.payload
-          ? typeof lead.payload === "string"
-            ? JSON.parse(lead.payload)
-            : lead.payload
+          ? typeof lead.payload === "string" ? JSON.parse(lead.payload) : lead.payload
           : {};
-      } catch (_) {
-        payloadObj = {};
-      }
+      } catch (_) { payloadObj = {}; }
 
-      // ✅ Merge ALL placeholders: {Name}, {Company}, {Signature}, {{name}} etc.
       let emailContent = mergePlaceholders(
-        templateContent,
-        lead,
-        payloadObj,
-        emailAccount.signature || ""
+        templateContent, lead, payloadObj, emailAccount.signature || ""
       );
 
-      // Add tracking pixel
       emailContent += `<img src="${baseUrl}/api/track/open?cid=${campaignId}&email=${encodeURIComponent(lead.email)}&t=${Date.now()}" width="1" height="1" style="display:none" />`;
 
-      // Add unsubscribe link
       const token = sign({
-        email: emailNorm,
-        userId,
-        campaignId,
-        scope: "all",
+        email: emailNorm, userId, campaignId, scope: "all",
         exp: Date.now() + 1000 * 60 * 60 * 24 * 30,
       });
-
       const unsubUrl = `${baseUrl}/unsubscribe?token=${encodeURIComponent(token)}`;
 
       emailContent += `
@@ -602,12 +560,12 @@ router.post("/:id/send", async (req, res) => {
         </p>`;
 
       const info = await transporter.sendMail({
-        from: `"${emailAccount.from_name || "Campaign"}" <${emailAccount.email}>`,
-        to: lead.email,
-        subject: emailSubject,   // ✅ Always from template
-        html: emailContent,      // ✅ Placeholders fully replaced
+        from:    `"${emailAccount.from_name || "Campaign"}" <${emailAccount.email}>`,
+        to:      lead.email,
+        subject: emailSubject,
+        html:    emailContent,
         headers: {
-          "List-Unsubscribe": `<${unsubUrl}>`,
+          "List-Unsubscribe":      `<${unsubUrl}>`,
           "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
         },
       });
@@ -616,30 +574,37 @@ router.post("/:id/send", async (req, res) => {
 
       await conn.query(
         `UPDATE campaign_data
-         SET status = 'sent',
-             sent_at = NOW(),
-             sent_from_email = ?,
-             smtp_message_id = ?
+         SET status = 'sent', sent_at = NOW(), sent_from_email = ?, smtp_message_id = ?
          WHERE id = ? AND status = 'pending'`,
         [emailAccount.email, smtpMessageId, lead.id]
       );
-sentCount++;
+      sentCount++;
 
-      // ✅ Schedule follow-up if enabled
-      if (campaign.has_followup && campaign.followup_template_id && campaign.followup_delay_hours != null) {
+      // ✅ Har lead ke liye saare followup steps queue mein daalo
+      if (followupSteps.length > 0) {
         try {
-          const delayHours = parseFloat(campaign.followup_delay_hours) || 24;
-          const scheduledAt = new Date(Date.now() + delayHours * 60 * 60 * 1000);
-          const pad = (n) => String(n).padStart(2, "0");
-          const scheduledAtStr = `${scheduledAt.getFullYear()}-${pad(scheduledAt.getMonth()+1)}-${pad(scheduledAt.getDate())} ${pad(scheduledAt.getHours())}:${pad(scheduledAt.getMinutes())}:${pad(scheduledAt.getSeconds())}`;
-          await conn.query(
-           `INSERT INTO followup_queue (campaign_id, user_id, email, followup_template_id, followup_subject, scheduled_at, status, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, 'pending', NOW(), NOW())`,
-            [campaignId, userId, lead.email, campaign.followup_template_id, campaign.followup_subject || null, scheduledAtStr]
-          );
-          console.log(`📅 Follow-up queued → ${lead.email} at ${scheduledAtStr}`);
+          for (const step of followupSteps) {
+            const delayHours     = (step.delay_days || 1) * 24;
+            const scheduledAtStr = getISTDatetimeAfterHours(delayHours);
+
+            await conn.query(
+              `INSERT INTO followup_queue
+                 (campaign_id, user_id, email, followup_template_id, followup_subject,
+                  scheduled_at, \`condition\`, followup_order, status, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', NOW(), NOW())`,
+              [
+                campaignId, userId, lead.email,
+                step.id,
+                step.subject || emailSubject,
+                scheduledAtStr,
+                step.send_condition || 'not_opened',
+                step.followup_order || 1,
+              ]
+            );
+            console.log(`📅 Followup #${step.followup_order} queued → ${lead.email} at ${scheduledAtStr}`);
+          }
         } catch (fErr) {
-          console.error(`⚠️ Follow-up queue failed for ${lead.email}:`, fErr.message);
+          console.error(`⚠️ Followup queue failed for ${lead.email}:`, fErr.message);
         }
       }
     }
@@ -651,15 +616,12 @@ sentCount++;
     const finalUnsubCount = Number(unsubResult[0]?.cnt || 0);
 
     await conn.query(
-      `UPDATE email_campaigns
-       SET status = 'sent',
-           sent_count = ?,
-           unsubscribed_count = ?
-       WHERE id = ?`,
+      `UPDATE email_campaigns SET status = 'sent', sent_count = ?, unsubscribed_count = ? WHERE id = ?`,
       [sentCount, finalUnsubCount, campaignId]
     );
 
     return res.json({ success: true, sentCount, skippedUnsub: finalUnsubCount });
+
   } catch (err) {
     console.error("❌ SEND CAMPAIGN ERROR:", err);
     return res.status(500).json({ success: false, message: err.message });
