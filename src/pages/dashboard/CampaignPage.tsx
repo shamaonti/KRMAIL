@@ -297,11 +297,20 @@ const CampaignPage = () => {
           settings: campaignData.settings,
           followupSettings: campaignData.followupSettings,
         });
-        await loadCampaigns();
+       await loadCampaigns();
         setSuccessMessage(scheduleAt
           ? `Scheduled for ${formatDisplay(toDbDatetime(scheduleAt))}`
           : 'Campaign saved successfully!');
         setTimeout(() => setSuccessMessage(''), 4000);
+
+        // ✅ Reset form after save
+        setCampaignName('');
+        setLeads([]);
+        setScheduleAt('');
+        setFollowupEnabled(false);
+        setCurrentCampaign(null);
+        setSelectedInboxIds(inboxEmails.length > 0 ? [inboxEmails[0].id] : []);
+
       } else setErrors([data?.message || 'Failed to save campaign']);
     } catch (e) {
       setErrors([`Failed to save: ${e instanceof Error ? e.message : 'Unknown'}`]);

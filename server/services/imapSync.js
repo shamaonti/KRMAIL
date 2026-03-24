@@ -4,13 +4,6 @@ const db = require("../db");
 const { getAllEmailAccounts } = require("../helpers/emailAccount");
 const { createImapClient } = require("../helpers/imapClient");
 
-// ─────────────────────────────────────────────
-//  REPLY DETECTION
-//  Incoming email:
-//   From = lead email
-//   To   = our sent_from_email
-//  → mark replied_at
-// ─────────────────────────────────────────────
 async function markReplyIfExists(userId, accountEmail, fromEmail, toEmail, subject) {
   try {
     const from = String(fromEmail || "").toLowerCase().trim();
@@ -48,9 +41,79 @@ async function markReplyIfExists(userId, accountEmail, fromEmail, toEmail, subje
   }
 }
 
-// ─────────────────────────────────────────────
-//  SYNC INBOX FOR ONE USER
-// ─────────────────────────────────────────────
+async function autoCreateCampaignFromCsv(userId, accountEmail, csvAttachment, subject, fromEmail, uid) {
+  try {
+    const csvText = csvAttachment.content.toString('utf8');
+    const lines = csvText.split('\n').filter(l => l.trim());
+    if (lines.length < 2) return;
+
+    const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/"/g, ''));
+    
+    const leads = lines.slice(1).map(line => {
+      const values = line.split(',').map(v => v.trim().replace(/"/g, ''));
+      const lead = {};
+      headers.forEach((h, i) => { lead[h] = values[i] || ''; });
+      return lead;
+    }).filter(l => l.email);
+
+    if (!leads.length) {
+      console.log('⚠️ No valid leads found in CSV');
+      return;
+    }
+
+    const [templates] = await db.query(
+      `SELECT id, subject, content FROM email_templates 
+       WHERE user_id = ? 
+       ORDER BY created_at DESC LIMIT 1`,
+      [userId]
+    );
+
+    if (!templates.length) {
+      console.log('⚠️ No email template found for user:', userId);
+      return;
+    }
+
+    const template = templates[0];
+
+    const [accounts] = await db.query(
+      `SELECT id FROM user_email_accounts WHERE user_id = ? AND from_email = ?`,
+      [userId, accountEmail]
+    );
+
+    const inboxAccountId = accounts[0]?.id || null;
+
+    const campaignName = `Auto - ${csvAttachment.filename} - uid:${uid} - ${new Date().toLocaleDateString()}`;
+    
+    const [result] = await db.query(
+      `INSERT INTO email_campaigns 
+       (user_id, name, subject, content, template_id, status, total_recipients, 
+        has_followup, inbox_account_id, created_at)
+       VALUES (?, ?, ?, ?, ?, 'draft', ?, 0, ?, NOW())`,
+      [userId, campaignName, template.subject, template.content, 
+       template.id, leads.length, inboxAccountId]
+    );
+
+    const campaignId = result.insertId;
+
+    const values = leads.map(l => [
+      campaignId,
+      l.email,
+      l.name || l.first_name || null,
+      JSON.stringify(l),
+      csvAttachment.filename
+    ]);
+
+    await db.query(
+      `INSERT IGNORE INTO campaign_data (campaign_id, email, name, payload, csv_name) VALUES ?`,
+      [values]
+    );
+
+    console.log(`🚀 Auto campaign created! ID: ${campaignId}, Leads: ${leads.length}`);
+  } catch (e) {
+    console.error('❌ Auto campaign creation error:', e.message);
+  }
+}
+
 async function syncInboxForUser(userId) {
   let accounts;
 
@@ -129,6 +192,33 @@ async function syncInboxForUser(userId) {
                   toEmail,
                   mail.subject || ""
                 );
+
+                // ✅ CHECK FOR CSV ATTACHMENT
+                if (mail.attachments && mail.attachments.length > 0) {
+                  const csvAttachment = mail.attachments.find(a => 
+                    a.filename && a.filename.toLowerCase().endsWith('.csv')
+                  );
+                  if (csvAttachment && account.email === 'clawbot@speedtech.life') {
+                    console.log(`📎 CSV found: ${csvAttachment.filename}`);
+                    const [existing] = await db.query(
+                      `SELECT id FROM email_campaigns 
+                       WHERE user_id = ? AND name LIKE ? LIMIT 1`,
+                      [userId, `Auto - ${csvAttachment.filename} - uid:${uid}%`]
+                    );
+                    if (existing.length > 0) {
+                      console.log('⚠️ Campaign already exists for this CSV, skipping...');
+                    } else {
+                      await autoCreateCampaignFromCsv(
+                        userId,
+                        account.email,
+                        csvAttachment,
+                        mail.subject || 'Auto Campaign',
+                        fromEmail,
+                        uid
+                      );
+                    }
+                  }
+                }
               } catch (e) {
                 console.error("MAIL STORE ERROR:", e.message);
               }
