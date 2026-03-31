@@ -629,5 +629,53 @@ router.post("/:id/send", async (req, res) => {
     conn.release();
   }
 });
+router.get("/:id/followup-stats", async (req, res) => {
+  try {
+    const id = toInt(req.params.id);
+    if (!id) return res.status(400).json({ success: false, message: "Invalid campaign ID" });
 
+    const rows = await q(
+      `SELECT
+         COUNT(*) AS total,
+         SUM(status = 'sent') AS sent,
+         SUM(status = 'pending') AS pending,
+         SUM(status = 'failed') AS failed
+       FROM followup_queue
+       WHERE campaign_id = ?`,
+      [id]
+    );
+
+    const r = rows[0];
+    return res.json({
+      success: true,
+      data: {
+        total:   Number(r.total   || 0),
+        sent:    Number(r.sent    || 0),
+        pending: Number(r.pending || 0),
+        failed:  Number(r.failed  || 0),
+      }
+    });
+  } catch (err) {
+    console.error("Followup stats error:", err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+router.get("/:id/followup-details", async (req, res) => {
+  try {
+    const id = toInt(req.params.id);
+    if (!id) return res.status(400).json({ success: false, message: "Invalid campaign ID" });
+
+    const rows = await q(
+      `SELECT email, followup_subject, status, scheduled_at, sent_at, error_message
+       FROM followup_queue
+       WHERE campaign_id = ?
+       ORDER BY id ASC`,
+      [id]
+    );
+
+    return res.json({ success: true, data: rows });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
 module.exports = router;
