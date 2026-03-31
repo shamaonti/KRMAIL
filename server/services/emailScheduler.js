@@ -154,13 +154,13 @@ class EmailScheduler {
     const conn = await db.getConnection();
 
     try {
-      // ✅ DB stores IST datetime, compare with current IST time
-      // Using DATE_ADD(UTC_TIMESTAMP(), INTERVAL 330 MINUTE) = current IST time
-      // This works on ALL MySQL servers without timezone tables
+      // ✅ FIX: MySQL server is already in IST, so NOW() gives correct IST time.
+      // Previously DATE_ADD(UTC_TIMESTAMP(), INTERVAL 330 MINUTE) was adding
+      // 5.5 hours on top of IST (double counting), causing campaigns to never fire.
       const [campaigns] = await conn.query(
         `SELECT * FROM email_campaigns
          WHERE status = 'scheduled'
-           AND scheduled_at <= DATE_ADD(UTC_TIMESTAMP(), INTERVAL 330 MINUTE)
+           AND scheduled_at <= NOW()
          ORDER BY scheduled_at ASC`
       );
 
@@ -185,7 +185,7 @@ class EmailScheduler {
 
   async getEmailAccountCapacity(conn, userId, inboxAccountId = null) {
     const ids = inboxAccountId
-      ? inboxAccountId.split(",").map(Number).filter(Boolean)
+      ? String(inboxAccountId).split(",").map(Number).filter(Boolean)
       : [];
 
     const [accounts] = await conn.query(
