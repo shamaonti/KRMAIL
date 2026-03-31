@@ -214,6 +214,35 @@ const loadSavedData = async () => {
       if (!storedUser) { alert("❌ Please log in again."); return; }
       const user = JSON.parse(storedUser);
 
+     // ✅ FIRST: Check SMTP before saving
+      for (let config of emailConfigs) {
+        if (!config.fromEmail) continue;
+
+        if (!config.smtpHost || !config.smtpPort || !config.smtpUsername || !config.smtpPassword) {
+          alert(`❌ Please fill all SMTP details for: ${config.fromEmail}`);
+          return;
+        }
+
+        const testRes = await fetch(`${API_BASE}/test`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            smtpHost: config.smtpHost,
+            smtpPort: config.smtpPort,
+            smtpUsername: config.smtpUsername,
+            smtpPassword: config.smtpPassword,
+            smtpSecurity: config.smtpSecurity
+          })
+        });
+        const testResult = await testRes.json();
+
+        if (!testResult.success) {
+          alert(`❌ Wrong SMTP password for: ${config.fromEmail}\nSave blocked!`);
+          return; // 🚫 STOP — don't save
+        }
+      }
+
+      // ✅ SECOND: SMTP verified — now save
       for (let config of emailConfigs) {
         if (!config.fromEmail) continue;
         const payload = {
