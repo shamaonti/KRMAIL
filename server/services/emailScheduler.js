@@ -144,41 +144,55 @@ class EmailScheduler {
     }
   }
 
-  async checkAndSendScheduledCampaigns() {
+ async checkAndSendScheduledCampaigns() {
     if (this.isProcessing) {
       console.log("⏳ Already processing campaigns, skipping...");
       return;
     }
 
     this.isProcessing = true;
-    const conn = await db.getConnection();
 
     try {
-      // ✅ FIX: MySQL server is already in IST, so NOW() gives correct IST time.
-      // Previously DATE_ADD(UTC_TIMESTAMP(), INTERVAL 330 MINUTE) was adding
-      // 5.5 hours on top of IST (double counting), causing campaigns to never fire.
-      const [campaigns] = await conn.query(
-        `SELECT * FROM email_campaigns
-         WHERE status = 'scheduled'
-           AND scheduled_at <= NOW()
-         ORDER BY scheduled_at ASC`
-      );
+      const conn = await db.getConnection();
+      let campaigns = [];
+
+      try {
+        const [rows] = await conn.query(
+          `SELECT * FROM email_campaigns
+           WHERE status = 'scheduled'
+             AND scheduled_at <= NOW()
+           ORDER BY scheduled_at ASC`
+        );
+        campaigns = rows;
+      } finally {
+        conn.release();
+      }
 
       if (!campaigns.length) return;
 
-      console.log(`\n🚀 ${campaigns.length} campaign(s) due — processing...`);
+      console.log(`\n🚀 ${campaigns.length} campaign(s) due — running ALL in parallel!`);
 
-      for (const campaign of campaigns) {
-        await this.sendCampaign(conn, campaign);
-        this.stats.totalProcessed++;
-      }
+      // ✅ Run ALL campaigns at the same time in parallel
+      await Promise.all(
+        campaigns.map(async (campaign) => {
+          const campaignConn = await db.getConnection();
+          try {
+            await this.sendCampaign(campaignConn, campaign);
+            this.stats.totalProcessed++;
+          } catch (err) {
+            console.error(`❌ Campaign ${campaign.id} failed:`, err.message);
+            this.stats.totalFailed++;
+          } finally {
+            campaignConn.release();
+          }
+        })
+      );
 
       this.stats.lastRunTime = new Date();
     } catch (err) {
       console.error("❌ Scheduler error:", err);
       this.stats.totalFailed++;
     } finally {
-      conn.release();
       this.isProcessing = false;
     }
   }
@@ -441,10 +455,14 @@ class EmailScheduler {
         let batchFailed = 0;
         const appUrl    = this.getAppUrl();
 
+      const transporterCache = {};
         for (const item of distribution) {
           const { lead, account } = item;
           const leadEmailNorm     = this.normalizeEmail(lead.email);
-          const transporter       = createTransporter(account);
+          if (!transporterCache[account.email]) {
+            transporterCache[account.email] = createTransporter(account);
+          }
+          const transporter = transporterCache[account.email];  
 
           try {
             let emailContent = this.mergePlaceholders(
