@@ -685,4 +685,48 @@ router.get("/:id/followup-details", async (req, res) => {
     return res.status(500).json({ success: false, message: err.message });
   }
 });
+// ✅ PAUSE
+router.post("/:id/pause", async (req, res) => {
+  try {
+    const id = toInt(req.params.id);
+    if (!id) return res.status(400).json({ success: false, message: "Invalid ID" });
+    await db.query(
+      `UPDATE email_campaigns SET status = 'paused', updated_at = NOW()
+       WHERE id = ? AND status IN ('scheduled', 'sending')`, [id]
+    );
+    return res.json({ success: true, message: "Campaign paused" });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ✅ RESUME
+router.post("/:id/resume", async (req, res) => {
+  try {
+    const id = toInt(req.params.id);
+    if (!id) return res.status(400).json({ success: false, message: "Invalid ID" });
+    await db.query(
+      `UPDATE email_campaigns SET status = 'scheduled', updated_at = NOW()
+       WHERE id = ? AND status = 'paused'`, [id]
+    );
+    return res.json({ success: true, message: "Campaign resumed" });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ✅ STOP permanently
+router.post("/:id/stop", async (req, res) => {
+  try {
+    const id = toInt(req.params.id);
+    if (!id) return res.status(400).json({ success: false, message: "Invalid ID" });
+    await db.query(
+      `UPDATE email_campaigns SET status = 'stopped', updated_at = NOW()
+       WHERE id = ? AND status IN ('scheduled', 'sending', 'paused')`, [id]
+    );
+    return res.json({ success: true, message: "Campaign stopped" });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
 module.exports = router;

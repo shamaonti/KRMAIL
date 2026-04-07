@@ -72,10 +72,7 @@ const CampaignResult = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
   const [followupStats, setFollowupStats] = useState<FollowupStep[]>([]);
-  const [followupDetails, setFollowupDetails] = useState<any[]>([]);
-const [showFollowupDetails, setShowFollowupDetails] = useState<number | null>(null);
-const [followupDetailsPage, setFollowupDetailsPage] = useState(1);
-const FOLLOWUP_PAGE_SIZE = 10;
+
 
   const fetchCampaignDetails = async (campaignId: number) => {
     try {
@@ -133,15 +130,7 @@ const fetchFollowupStats = async (campaignId: number) => {
       console.error('Followup stats error:', err);
     }
   };
-  const fetchFollowupDetails = async (campaignId: number) => {
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/campaigns/${campaignId}/followup-details`);
-      const data = await res.json();
-      if (data.success) setFollowupDetails(data.data);
-    } catch (err) {
-      console.error('Followup details error:', err);
-    }
-  };
+  // fetchFollowupDetails removed (unused)
   useEffect(() => {
     const campaignId = parseCampaignId(id);
     if (!campaignId) {
@@ -151,7 +140,6 @@ const fetchFollowupStats = async (campaignId: number) => {
     }
     fetchCampaignDetails(campaignId);
     fetchFollowupStats(campaignId);
-    fetchFollowupDetails(campaignId);
   }, [id]);
 
   // ✅ Safe numeric locals
@@ -546,70 +534,7 @@ const fetchFollowupStats = async (campaignId: number) => {
                     </div>
                   )}
 
-                  {/* ✅ View Details Button */}
-                  <div className="mt-4 flex justify-end">
-                    <button
-                      onClick={() => setShowFollowupDetails(
-                        prev => prev === step.followup_order ? null : step.followup_order
-                      )}
-                      className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700"
-                    >
-                      {showFollowupDetails === step.followup_order ? "Hide Details ▲" : "View Details ▼"}
-                    </button>
-                  </div>
-
-                  {/* ✅ Details Table - only for this step */}
-                  {showFollowupDetails === step.followup_order && (
-                    <div className="mt-4 overflow-x-auto">
-                      <table className="w-full text-sm border rounded-lg overflow-hidden">
-                        <thead className="bg-gray-100">
-                          <tr>
-                            <th className="text-left p-3 font-medium text-black">#</th>
-                            <th className="text-left p-3 font-medium text-black">Email</th>
-                            <th className="text-left p-3 font-medium text-black">Subject</th>
-                            <th className="text-left p-3 font-medium text-black">Status</th>
-                            <th className="text-left p-3 font-medium text-black">Scheduled At</th>
-                            <th className="text-left p-3 font-medium text-black">Sent At</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {followupDetails
-                            .filter(row => row.followup_order === step.followup_order)
-                            .slice(
-                              (followupDetailsPage - 1) * FOLLOWUP_PAGE_SIZE,
-                              followupDetailsPage * FOLLOWUP_PAGE_SIZE
-                            )
-                            .map((row, i) => (
-                              <tr key={i} className="border-t hover:bg-gray-50">
-                                <td className="p-3 text-muted-foreground">
-                                  {(followupDetailsPage - 1) * FOLLOWUP_PAGE_SIZE + i + 1}
-                                </td>
-                                <td className="p-3 font-mono text-xs">{row.email}</td>
-                                <td className="p-3 text-xs">{row.followup_subject || '-'}</td>
-                                <td className="p-3">
-                                  <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                                    row.status === 'sent'    ? 'bg-green-100 text-green-700' :
-                                    row.status === 'pending' ? 'bg-yellow-100 text-yellow-700' :
-                                    row.status === 'failed'  ? 'bg-red-100 text-red-700' :
-                                    'bg-gray-100 text-gray-700'
-                                  }`}>
-                                    {row.status === 'sent'    ? '✅ Sent' :
-                                     row.status === 'pending' ? '⏳ Pending' :
-                                     row.status === 'failed'  ? '❌ Failed' : row.status}
-                                  </span>
-                                </td>
-                                <td className="p-3 text-xs text-muted-foreground">
-                                  {row.scheduled_at ? new Date(row.scheduled_at).toLocaleString() : '-'}
-                                </td>
-                                <td className="p-3 text-xs text-muted-foreground">
-                                  {row.sent_at ? new Date(row.sent_at).toLocaleString() : '-'}
-                                </td>
-                              </tr>
-                            ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
+                  
 
                 </div>
               ))}
