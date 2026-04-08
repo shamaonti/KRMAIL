@@ -144,41 +144,55 @@ class EmailScheduler {
     }
   }
 
-  async checkAndSendScheduledCampaigns() {
+ async checkAndSendScheduledCampaigns() {
     if (this.isProcessing) {
       console.log("⏳ Already processing campaigns, skipping...");
       return;
     }
 
     this.isProcessing = true;
-    const conn = await db.getConnection();
 
     try {
-      // ✅ FIX: MySQL server is already in IST, so NOW() gives correct IST time.
-      // Previously DATE_ADD(UTC_TIMESTAMP(), INTERVAL 330 MINUTE) was adding
-      // 5.5 hours on top of IST (double counting), causing campaigns to never fire.
-      const [campaigns] = await conn.query(
-        `SELECT * FROM email_campaigns
-         WHERE status = 'scheduled'
-           AND scheduled_at <= NOW()
-         ORDER BY scheduled_at ASC`
-      );
+      const conn = await db.getConnection();
+      let campaigns = [];
+
+      try {
+        const [rows] = await conn.query(
+          `SELECT * FROM email_campaigns
+           WHERE status = 'scheduled'
+             AND scheduled_at <= NOW()
+           ORDER BY scheduled_at ASC`
+        );
+        campaigns = rows;
+      } finally {
+        conn.release();
+      }
 
       if (!campaigns.length) return;
 
-      console.log(`\n🚀 ${campaigns.length} campaign(s) due — processing...`);
+      console.log(`\n🚀 ${campaigns.length} campaign(s) due — running ALL in parallel!`);
 
-      for (const campaign of campaigns) {
-        await this.sendCampaign(conn, campaign);
-        this.stats.totalProcessed++;
-      }
+      // ✅ Run ALL campaigns at the same time in parallel
+      await Promise.all(
+        campaigns.map(async (campaign) => {
+          const campaignConn = await db.getConnection();
+          try {
+            await this.sendCampaign(campaignConn, campaign);
+            this.stats.totalProcessed++;
+          } catch (err) {
+            console.error(`❌ Campaign ${campaign.id} failed:`, err.message);
+            this.stats.totalFailed++;
+          } finally {
+            campaignConn.release();
+          }
+        })
+      );
 
       this.stats.lastRunTime = new Date();
     } catch (err) {
       console.error("❌ Scheduler error:", err);
       this.stats.totalFailed++;
     } finally {
-      conn.release();
       this.isProcessing = false;
     }
   }
@@ -297,10 +311,19 @@ class EmailScheduler {
     return Number(result[0]?.cnt || 0);
   }
 
-  async sendCampaign(conn, campaign) {
-    console.log(`\n📧 Campaign: "${campaign.name}" (id: ${campaign.id})`);
+ async sendCampaign(conn, campaign) {
+  console.log(`\n📧 Campaign: "${campaign.name}" (id: ${campaign.id})`);
 
-    const maxLevel = campaign.max_level || 100;
+  // ✅ Check if paused or stopped before sending
+  const [[fresh]] = await conn.query(
+    `SELECT status FROM email_campaigns WHERE id = ?`, [campaign.id]
+  );
+  if (fresh?.status === 'paused' || fresh?.status === 'stopped') {
+    console.log(`⏸️ Campaign ${campaign.id} is ${fresh.status} — skipping`);
+    return;
+  }
+
+  const maxLevel = campaign.max_level || 100;
     const delayMs  = campaign.delay_ms  || 200;
 
     console.log(`⚙️ Settings: max_level=${maxLevel}, delay_ms=${delayMs}ms`);
@@ -441,10 +464,23 @@ class EmailScheduler {
         let batchFailed = 0;
         const appUrl    = this.getAppUrl();
 
+      const transporterCache = {};
         for (const item of distribution) {
+          // ✅ Check pause/stop on every email
+          const [[status]] = await conn.query(
+            `SELECT status FROM email_campaigns WHERE id = ?`, [campaign.id]
+          );
+          if (status?.status === 'paused' || status?.status === 'stopped') {
+            console.log(`⏸️ Campaign ${campaign.id} ${status.status} mid-batch — stopping`);
+            return;
+          }
+
           const { lead, account } = item;
           const leadEmailNorm     = this.normalizeEmail(lead.email);
-          const transporter       = createTransporter(account);
+          if (!transporterCache[account.email]) {
+            transporterCache[account.email] = createTransporter(account);
+          }
+          const transporter = transporterCache[account.email];  
 
           try {
             let emailContent = this.mergePlaceholders(
@@ -522,16 +558,21 @@ class EmailScheduler {
 
         const batchUnsubCount = await this.getUnsubscribedCount(conn, campaign.id);
 
-        await conn.query(
-          `UPDATE email_campaigns
-           SET sent_count         = ?,
-               failed_count       = ?,
-               unsubscribed_count = ?,
-               status             = 'sending',
-               updated_at         = NOW()
-           WHERE id = ?`,
-          [totalSent, totalFailed, batchUnsubCount, campaign.id]
-        );
+        const [sentResult] = await conn.query(
+  `SELECT COUNT(*) as cnt FROM campaign_data WHERE campaign_id = ? AND status = 'sent'`,
+  [campaign.id]
+);
+const actualSentCount = Number(sentResult[0]?.cnt || 0);
+
+await conn.query(
+  `UPDATE email_campaigns
+   SET sent_count         = ?,
+       unsubscribed_count = ?,
+       status             = 'sending',
+       updated_at         = NOW()
+   WHERE id = ?`,
+  [actualSentCount, batchUnsubCount, campaign.id]
+);
 
         console.log(`📊 Unsubscribed so far: ${batchUnsubCount}`);
 
@@ -551,18 +592,22 @@ class EmailScheduler {
       // ─── End batch loop ───────────────────────────────────────────────
 
       const finalUnsubCount = await this.getUnsubscribedCount(conn, campaign.id);
+const [finalSentResult] = await conn.query(
+  `SELECT COUNT(*) as cnt FROM campaign_data WHERE campaign_id = ? AND status = 'sent'`,
+  [campaign.id]
+);
+const actualFinalSentCount = Number(finalSentResult[0]?.cnt || 0);
 
-      await conn.query(
-        `UPDATE email_campaigns
-         SET status             = 'sent',
-             sent_count         = ?,
-             failed_count       = ?,
-             unsubscribed_count = ?,
-             completed_at       = NOW(),
-             updated_at         = NOW()
-         WHERE id = ?`,
-        [totalSent, totalFailed, finalUnsubCount, campaign.id]
-      );
+await conn.query(
+  `UPDATE email_campaigns
+   SET status             = 'sent',
+       sent_count         = ?,
+       unsubscribed_count = ?,
+       completed_at       = NOW(),
+       updated_at         = NOW()
+   WHERE id = ?`,
+  [actualFinalSentCount, finalUnsubCount, campaign.id]
+);
 
       console.log(`\n🏁 CAMPAIGN COMPLETE!`);
       console.log(`📊 Total Batches:      ${batchNumber}`);
