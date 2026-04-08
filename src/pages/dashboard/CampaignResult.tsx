@@ -20,7 +20,9 @@ import {
 } from "lucide-react";
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:3001";
-interface FollowupStats {
+interface FollowupStep {
+  followup_order: number;
+  followup_subject: string;
   total: number;
   sent: number;
   pending: number;
@@ -69,11 +71,8 @@ const CampaignResult = () => {
   const [campaign, setCampaign] = useState<Campaign | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
-  const [followupStats, setFollowupStats] = useState<FollowupStats | null>(null);
-  const [followupDetails, setFollowupDetails] = useState<any[]>([]);
-const [showFollowupDetails, setShowFollowupDetails] = useState(false);
-const [followupDetailsPage, setFollowupDetailsPage] = useState(1);
-const FOLLOWUP_PAGE_SIZE = 10;
+  const [followupStats, setFollowupStats] = useState<FollowupStep[]>([]);
+
 
   const fetchCampaignDetails = async (campaignId: number) => {
     try {
@@ -125,20 +124,13 @@ const fetchFollowupStats = async (campaignId: number) => {
     try {
       const res = await fetch(`${API_BASE_URL}/api/campaigns/${campaignId}/followup-stats`);
       const data = await res.json();
-      if (data.success) setFollowupStats(data.data);
+      // ✅ now data.data is an array of steps
+      if (data.success) setFollowupStats(data.data || []);
     } catch (err) {
       console.error('Followup stats error:', err);
     }
   };
-  const fetchFollowupDetails = async (campaignId: number) => {
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/campaigns/${campaignId}/followup-details`);
-      const data = await res.json();
-      if (data.success) setFollowupDetails(data.data);
-    } catch (err) {
-      console.error('Followup details error:', err);
-    }
-  };
+  // fetchFollowupDetails removed (unused)
   useEffect(() => {
     const campaignId = parseCampaignId(id);
     if (!campaignId) {
@@ -148,7 +140,6 @@ const fetchFollowupStats = async (campaignId: number) => {
     }
     fetchCampaignDetails(campaignId);
     fetchFollowupStats(campaignId);
-    fetchFollowupDetails(campaignId);
   }, [id]);
 
   // ✅ Safe numeric locals
@@ -481,122 +472,73 @@ const fetchFollowupStats = async (campaignId: number) => {
         )}
 
         {/* Follow-up Tracking */}
-        {campaign.hasFollowup && followupStats && (
+        {campaign.hasFollowup && followupStats.length > 0 && (
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-              <Send className="h-5 w-5 text-black" />
+                <Send className="h-5 w-5 text-black" />
                 Follow-up Tracking
               </CardTitle>
             </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div className="text-center p-4 bg-purple-50 rounded-lg">
-                <div className="text-3xl font-bold text-black">{followupStats.total}</div>
-                  <p className="text-sm text-muted-foreground mt-1">Total Queued</p>
-                </div>
-                <div className="text-center p-4 bg-green-50 rounded-lg">
-                  <div className="text-3xl font-bold text-green-600">{followupStats.sent}</div>
-                  <p className="text-sm text-muted-foreground mt-1">Sent</p>
-                </div>
-                <div className="text-center p-4 bg-yellow-50 rounded-lg">
-                  <div className="text-3xl font-bold text-yellow-600">{followupStats.pending}</div>
-                  <p className="text-sm text-muted-foreground mt-1">Pending</p>
-                </div>
-                <div className="text-center p-4 bg-red-50 rounded-lg">
-                  <div className="text-3xl font-bold text-red-600">{followupStats.failed}</div>
-                  <p className="text-sm text-muted-foreground mt-1">Failed</p>
-                </div>
-              </div>
-              {followupStats.total > 0 && (
-                <div className="mt-4">
-                  <div className="flex justify-between text-xs mb-1">
-                    <span className="text-muted-foreground">Follow-up Progress</span>
-                   <span className="font-medium text-black">
-                      {((followupStats.sent / followupStats.total) * 100).toFixed(1)}% sent
+            <CardContent className="space-y-4">
+
+              {/* ✅ Each followup shown separately with its own name */}
+              {followupStats.map((step) => (
+                <div key={step.followup_order}
+                  className="border rounded-lg p-4 bg-gray-50">
+
+                  {/* Followup name + number */}
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="w-7 h-7 flex items-center justify-center
+                      bg-purple-600 text-white rounded-full text-xs font-bold">
+                      {step.followup_order}
                     </span>
+                    <p className="text-sm font-semibold">
+                      {step.followup_subject || `Followup #${step.followup_order}`}
+                    </p>
                   </div>
-                  <Progress
-                    value={(followupStats.sent / followupStats.total) * 100}
-                 className="h-2 [&>div]:bg-black"
-                  />
-                </div>
-              )}
-              <div className="mt-4 flex justify-end">
-                <button
-                  onClick={() => setShowFollowupDetails(!showFollowupDetails)}
-                  className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700"
-                >
-                  {showFollowupDetails ? "Hide Details ▲" : "View Details ▼"}
-                </button>
-              </div>
-              {showFollowupDetails && (
-                <div className="mt-4 overflow-x-auto">
-                  <table className="w-full text-sm border rounded-lg overflow-hidden">
-                    <thead className="bg-gray-100">
-                      <tr>
-                        <th className="text-left p-3 font-medium text-black">#</th>
-<th className="text-left p-3 font-medium text-black">Email</th>
-<th className="text-left p-3 font-medium text-black">Subject</th>
-<th className="text-left p-3 font-medium text-black">Status</th>
-<th className="text-left p-3 font-medium text-black">Scheduled At</th>
-<th className="text-left p-3 font-medium text-black">Sent At</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {followupDetails
-                        .slice((followupDetailsPage - 1) * FOLLOWUP_PAGE_SIZE, followupDetailsPage * FOLLOWUP_PAGE_SIZE)
-                        .map((row, i) => (
-                        <tr key={i} className="border-t hover:bg-gray-50">
-                          <td className="p-3 text-muted-foreground">{(followupDetailsPage - 1) * FOLLOWUP_PAGE_SIZE + i + 1}</td>
-                          <td className="p-3 font-mono text-xs">{row.email}</td>
-                          <td className="p-3 text-xs">{row.followup_subject || '-'}</td>
-                          <td className="p-3">
-                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                              row.status === 'sent'    ? 'bg-green-100 text-green-700' :
-                              row.status === 'pending' ? 'bg-yellow-100 text-yellow-700' :
-                              row.status === 'failed'  ? 'bg-red-100 text-red-700' :
-                              'bg-gray-100 text-gray-700'
-                            }`}>
-                              {row.status === 'sent' ? '✅ Sent' :
-                               row.status === 'pending' ? '⏳ Pending' :
-                               row.status === 'failed' ? '❌ Failed' : row.status}
-                            </span>
-                          </td>
-                          <td className="p-3 text-xs text-muted-foreground">
-                            {row.scheduled_at ? new Date(row.scheduled_at).toLocaleString() : '-'}
-                          </td>
-                          <td className="p-3 text-xs text-muted-foreground">
-                            {row.sent_at ? new Date(row.sent_at).toLocaleString() : '-'}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  {followupDetails.length > FOLLOWUP_PAGE_SIZE && (
-                    <div className="flex items-center justify-between pt-3 mt-3 border-t">
-                      <div className="text-xs text-muted-foreground">
-                        Showing {((followupDetailsPage - 1) * FOLLOWUP_PAGE_SIZE) + 1}–{Math.min(followupDetailsPage * FOLLOWUP_PAGE_SIZE, followupDetails.length)} of {followupDetails.length}
-                      </div>
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => setFollowupDetailsPage(p => Math.max(1, p - 1))}
-                          disabled={followupDetailsPage === 1}
-                          className="px-3 py-1 text-xs border rounded disabled:opacity-40 hover:bg-gray-50"
-                        >Previous</button>
-                        <span className="px-3 py-1 text-xs bg-black text-white rounded">
-                          {followupDetailsPage} / {Math.ceil(followupDetails.length / FOLLOWUP_PAGE_SIZE)}
+
+                  {/* Tracking numbers */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    <div className="text-center p-3 bg-purple-50 rounded-lg">
+                      <div className="text-2xl font-bold text-black">{step.total}</div>
+                      <p className="text-xs text-muted-foreground mt-1">Total Queued</p>
+                    </div>
+                    <div className="text-center p-3 bg-green-50 rounded-lg">
+                      <div className="text-2xl font-bold text-green-600">{step.sent}</div>
+                      <p className="text-xs text-muted-foreground mt-1">Sent</p>
+                    </div>
+                    <div className="text-center p-3 bg-yellow-50 rounded-lg">
+                      <div className="text-2xl font-bold text-yellow-600">{step.pending}</div>
+                      <p className="text-xs text-muted-foreground mt-1">Pending</p>
+                    </div>
+                    <div className="text-center p-3 bg-red-50 rounded-lg">
+                      <div className="text-2xl font-bold text-red-600">{step.failed}</div>
+                      <p className="text-xs text-muted-foreground mt-1">Failed</p>
+                    </div>
+                  </div>
+
+                  {/* Progress bar */}
+                  {step.total > 0 && (
+                    <div className="mt-3">
+                      <div className="flex justify-between text-xs mb-1">
+                        <span className="text-muted-foreground">Progress</span>
+                        <span className="font-medium text-purple-600">
+                          {((step.sent / step.total) * 100).toFixed(1)}% sent
                         </span>
-                        <button
-                          onClick={() => setFollowupDetailsPage(p => Math.min(Math.ceil(followupDetails.length / FOLLOWUP_PAGE_SIZE), p + 1))}
-                          disabled={followupDetailsPage === Math.ceil(followupDetails.length / FOLLOWUP_PAGE_SIZE)}
-                          className="px-3 py-1 text-xs border rounded disabled:opacity-40 hover:bg-gray-50"
-                        >Next</button>
                       </div>
+                      <Progress
+                        value={(step.sent / step.total) * 100}
+                        className="h-2 [&>div]:bg-purple-500"
+                      />
                     </div>
                   )}
+
+                  
+
                 </div>
-              )}
+              ))}
+
             </CardContent>
           </Card>
         )}

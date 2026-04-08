@@ -8,7 +8,7 @@ import { Switch } from "@/components/ui/switch";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Eye, Trash2, Save, Send, CheckCircle, AlertCircle, Loader2, RefreshCw } from "lucide-react";
+import { Eye, Trash2, Save, Send, CheckCircle, AlertCircle, Loader2, RefreshCw, PauseCircle, PlayCircle, StopCircle } from "lucide-react";
 import CSVUploader from "@/components/CSVUploader";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -355,6 +355,46 @@ const CampaignPage = () => {
         setTimeout(() => setSuccessMessage(''), 3000);
       } else setErrors([data?.message || 'Failed']);
     } catch (e) { setErrors([`Delete failed: ${e instanceof Error ? e.message : 'Unknown'}`]); }
+  };
+
+  // ✅ PAUSE
+  const handlePauseCampaign = async (campaign: Campaign) => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/campaigns/${campaign.id}/pause`, { method: 'POST' });
+      const data = safeJsonParse<any>(await res.text(), null);
+      if (data?.success) {
+        await loadCampaigns();
+        setSuccessMessage(`"${campaign.name}" paused ⏸️`);
+        setTimeout(() => setSuccessMessage(''), 3000);
+      }
+    } catch { setErrors(['Failed to pause']); }
+  };
+
+  // ✅ RESUME
+  const handleResumeCampaign = async (campaign: Campaign) => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/campaigns/${campaign.id}/resume`, { method: 'POST' });
+      const data = safeJsonParse<any>(await res.text(), null);
+      if (data?.success) {
+        await loadCampaigns();
+        setSuccessMessage(`"${campaign.name}" resumed ▶️`);
+        setTimeout(() => setSuccessMessage(''), 3000);
+      }
+    } catch { setErrors(['Failed to resume']); }
+  };
+
+  // ✅ STOP
+  const handleStopCampaign = async (campaign: Campaign) => {
+    if (!confirm(`Permanently stop "${campaign.name}"? Cannot be undone!`)) return;
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/campaigns/${campaign.id}/stop`, { method: 'POST' });
+      const data = safeJsonParse<any>(await res.text(), null);
+      if (data?.success) {
+        await loadCampaigns();
+        setSuccessMessage(`"${campaign.name}" stopped permanently 🛑`);
+        setTimeout(() => setSuccessMessage(''), 3000);
+      }
+    } catch { setErrors(['Failed to stop']); }
   };
 
   const filtered  = campaigns.filter(c =>
@@ -759,11 +799,19 @@ const CampaignPage = () => {
                               <p className="text-sm text-muted-foreground">{c.subject}</p>
                             </TableCell>
                             <TableCell>
-                              <Badge variant={
+                            <Badge
+                              variant={
                                 c.status === 'sent'      ? 'default'     :
                                 c.status === 'scheduled' ? 'secondary'   :
                                 c.status === 'sending'   ? 'destructive' : 'outline'
-                              }>{c.status}</Badge>
+                              }
+                              className={
+                                c.status === 'paused'  ? 'border-yellow-500 text-yellow-600' :
+                                c.status === 'stopped' ? 'border-red-500 text-red-600' : ''
+                              }
+                            >
+                              {c.status}
+                            </Badge>
                             </TableCell>
                             <TableCell>
                               {c.scheduledAt
@@ -777,25 +825,63 @@ const CampaignPage = () => {
                             <TableCell>{formatDisplay(c.createdAt)}</TableCell>
                             <TableCell>
                               <div className="flex items-center gap-1">
-                                {(c.status === 'draft' || c.status === 'scheduled') && (
+
+                                {/* Send — draft only */}
+                                {c.status === 'draft' && (
                                   <Button size="sm" variant="ghost"
                                     onClick={() => handleSendCampaign(c)}
                                     disabled={isSending && sendingCampaignId === c.id}
-                                    className="text-primary hover:text-primary">
+                                    className="text-primary hover:text-primary"
+                                    title="Send Now">
                                     {isSending && sendingCampaignId === c.id
                                       ? <Loader2 className="h-4 w-4 animate-spin" />
                                       : <Send className="h-4 w-4" />}
                                   </Button>
                                 )}
+
+                                {/* ⏸️ Pause */}
+                                {(c.status === 'scheduled' || c.status === 'sending') && (
+                                  <Button size="sm" variant="ghost"
+                                    onClick={() => handlePauseCampaign(c)}
+                                    className="text-yellow-600 hover:text-yellow-700"
+                                    title="Pause Campaign">
+                                    <PauseCircle className="h-4 w-4" />
+                                  </Button>
+                                )}
+
+                                {/* ▶️ Resume */}
+                                {c.status === 'paused' && (
+                                  <Button size="sm" variant="ghost"
+                                    onClick={() => handleResumeCampaign(c)}
+                                    className="text-green-600 hover:text-green-700"
+                                    title="Resume Campaign">
+                                    <PlayCircle className="h-4 w-4" />
+                                  </Button>
+                                )}
+
+                                {/* 🛑 Stop */}
+                                {(c.status === 'scheduled' || c.status === 'sending' || c.status === 'paused') && (
+                                  <Button size="sm" variant="ghost"
+                                    onClick={() => handleStopCampaign(c)}
+                                    className="text-red-600 hover:text-red-700"
+                                    title="Stop Permanently">
+                                    <StopCircle className="h-4 w-4" />
+                                  </Button>
+                                )}
+
+                                {/* 👁️ View */}
                                 <Button size="sm" variant="ghost"
                                   onClick={() => navigate(`/dashboard/campaign-result/${c.id}`)}>
                                   <Eye className="h-4 w-4" />
                                 </Button>
+
+                                {/* 🗑️ Delete */}
                                 <Button size="sm" variant="ghost"
                                   onClick={() => handleDeleteCampaign(c.id)}
-                                  disabled={c.status === "sending"}>
+                                  disabled={c.status === 'sending' || c.status === 'paused'}>
                                   <Trash2 className="h-4 w-4 text-destructive" />
                                 </Button>
+
                               </div>
                             </TableCell>
                           </TableRow>

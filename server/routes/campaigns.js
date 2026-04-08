@@ -634,27 +634,34 @@ router.get("/:id/followup-stats", async (req, res) => {
     const id = toInt(req.params.id);
     if (!id) return res.status(400).json({ success: false, message: "Invalid campaign ID" });
 
+    // ✅ Each followup step separately with its name
     const rows = await q(
       `SELECT
-         COUNT(*) AS total,
-         SUM(status = 'sent') AS sent,
+         followup_order,
+         followup_subject,
+         COUNT(*)                AS total,
+         SUM(status = 'sent')    AS sent,
          SUM(status = 'pending') AS pending,
-         SUM(status = 'failed') AS failed
+         SUM(status = 'failed')  AS failed
        FROM followup_queue
-       WHERE campaign_id = ?`,
+       WHERE campaign_id = ?
+       GROUP BY followup_order, followup_subject
+       ORDER BY followup_order ASC`,
       [id]
     );
 
-    const r = rows[0];
     return res.json({
       success: true,
-      data: {
+      data: rows.map(r => ({
+        followup_order:   Number(r.followup_order),
+        followup_subject: r.followup_subject || `Followup #${r.followup_order}`,
         total:   Number(r.total   || 0),
         sent:    Number(r.sent    || 0),
         pending: Number(r.pending || 0),
         failed:  Number(r.failed  || 0),
-      }
+      }))
     });
+
   } catch (err) {
     console.error("Followup stats error:", err);
     return res.status(500).json({ success: false, message: err.message });
@@ -666,14 +673,58 @@ router.get("/:id/followup-details", async (req, res) => {
     if (!id) return res.status(400).json({ success: false, message: "Invalid campaign ID" });
 
     const rows = await q(
-      `SELECT email, followup_subject, status, scheduled_at, sent_at, error_message
+      `SELECT followup_order, email, followup_subject, status, scheduled_at, sent_at, error_message
        FROM followup_queue
        WHERE campaign_id = ?
-       ORDER BY id ASC`,
+       ORDER BY followup_order ASC, id ASC`,
       [id]
     );
 
     return res.json({ success: true, data: rows });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+// ✅ PAUSE
+router.post("/:id/pause", async (req, res) => {
+  try {
+    const id = toInt(req.params.id);
+    if (!id) return res.status(400).json({ success: false, message: "Invalid ID" });
+    await db.query(
+      `UPDATE email_campaigns SET status = 'paused', updated_at = NOW()
+       WHERE id = ? AND status IN ('scheduled', 'sending')`, [id]
+    );
+    return res.json({ success: true, message: "Campaign paused" });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ✅ RESUME
+router.post("/:id/resume", async (req, res) => {
+  try {
+    const id = toInt(req.params.id);
+    if (!id) return res.status(400).json({ success: false, message: "Invalid ID" });
+    await db.query(
+      `UPDATE email_campaigns SET status = 'scheduled', updated_at = NOW()
+       WHERE id = ? AND status = 'paused'`, [id]
+    );
+    return res.json({ success: true, message: "Campaign resumed" });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ✅ STOP permanently
+router.post("/:id/stop", async (req, res) => {
+  try {
+    const id = toInt(req.params.id);
+    if (!id) return res.status(400).json({ success: false, message: "Invalid ID" });
+    await db.query(
+      `UPDATE email_campaigns SET status = 'stopped', updated_at = NOW()
+       WHERE id = ? AND status IN ('scheduled', 'sending', 'paused')`, [id]
+    );
+    return res.json({ success: true, message: "Campaign stopped" });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
   }
