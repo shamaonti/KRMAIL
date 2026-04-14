@@ -60,15 +60,10 @@ async function fetchFollowupTargets(limit = MAX_PER_TICK) {
      LEFT JOIN campaign_data cd
        ON cd.campaign_id = fq.campaign_id
       AND LOWER(TRIM(cd.email)) = LOWER(TRIM(fq.email))
-
-     -- Sender account
+-- Sender account
      LEFT JOIN user_email_accounts uea
        ON uea.user_id = fq.user_id
-      AND (
-            cd.sent_from_email IS NULL
-            OR uea.from_email = cd.sent_from_email
-          )
-
+      AND uea.from_email = cd.sent_from_email
      -- Unsubscribe guard
      LEFT JOIN unsubscribes u
        ON u.user_id = fq.user_id
@@ -102,7 +97,7 @@ async function fetchFollowupTargets(limit = MAX_PER_TICK) {
 // ─── Row claim karo (duplicate send prevent) ──────────────────────────────────
 async function claimFollowup(fqId) {
   const [res] = await db.query(
-    `UPDATE followup_queue SET status = 'sent' WHERE id = ? AND status = 'pending'`,
+    `UPDATE followup_queue SET status = 'processing' WHERE id = ? AND status = 'pending'`,
     [fqId]
   );
   return res.affectedRows === 1;
@@ -225,7 +220,7 @@ async function runFollowups() {
         await sendOneFollowup(row);
 
         await db.query(
-          `UPDATE followup_queue SET sent_at = NOW(), updated_at = NOW() WHERE id = ?`,
+          `UPDATE followup_queue SET status = 'sent', sent_at = NOW(), updated_at = NOW() WHERE id = ?`,
           [row.fq_id]
         );
 
