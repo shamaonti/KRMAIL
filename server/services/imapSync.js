@@ -164,20 +164,44 @@ async function syncSingleAccount(userId, account) {
           });
 
           fetcher.on("message", (msg) => {
-            let uid;
+            let uid = null;
+            let parsedMail = null;
 
             msg.once("attributes", (attrs) => {
-              uid = attrs.uid;
+              uid = attrs.uid || null;
             });
 
             msg.once("body", async (stream) => {
               try {
-                const mail = await simpleParser(stream);
-                const fromEmail = mail.from?.value?.[0]?.address || mail.from?.text || "";
-                const toEmail = mail.to?.value?.[0]?.address || mail.to?.text || "";
+                parsedMail = await simpleParser(stream);
+              } catch (error) {
+                console.error(`MAIL PARSE ERROR [${account.email}]:`, error.message);
+              }
+            });
+
+            msg.once("end", async () => {
+              try {
+                if (!uid || !parsedMail) return;
+
+                const [existingRows] = await db.query(
+                  `SELECT id
+                   FROM inbox_emails
+                   WHERE user_id = ? AND account_email = ? AND imap_uid = ?
+                   LIMIT 1`,
+                  [userId, account.email, uid]
+                );
+
+                if (existingRows.length > 0) {
+                  return;
+                }
+
+                const fromEmail =
+                  parsedMail.from?.value?.[0]?.address || parsedMail.from?.text || "";
+                const toEmail =
+                  parsedMail.to?.value?.[0]?.address || parsedMail.to?.text || "";
 
                 await db.query(
-                  `INSERT IGNORE INTO inbox_emails
+                  `INSERT INTO inbox_emails
                    (user_id, account_email, imap_uid, from_email, to_email, subject, body, preview, received_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                   [
@@ -186,25 +210,25 @@ async function syncSingleAccount(userId, account) {
                     uid,
                     fromEmail,
                     toEmail,
-                    mail.subject || "",
-                    mail.text || "",
-                    (mail.text || "").slice(0, 120),
-                    mail.date || new Date(),
+                    parsedMail.subject || "",
+                    parsedMail.text || "",
+                    (parsedMail.text || "").slice(0, 120),
+                    parsedMail.date || new Date(),
                   ]
                 );
 
-                console.log(`Stored [${account.email}]:`, mail.subject);
+                console.log(`Stored [${account.email}] uid=${uid}:`, parsedMail.subject);
 
                 await markReplyIfExists(
                   userId,
                   account.email,
                   fromEmail,
                   toEmail,
-                  mail.subject || ""
+                  parsedMail.subject || ""
                 );
 
-                if (mail.attachments?.length) {
-                  const csvAttachment = mail.attachments.find(
+                if (parsedMail.attachments?.length) {
+                  const csvAttachment = parsedMail.attachments.find(
                     (attachment) =>
                       attachment.filename &&
                       attachment.filename.toLowerCase().endsWith(".csv")
@@ -220,17 +244,17 @@ async function syncSingleAccount(userId, account) {
                       [userId, `Auto - ${csvAttachment.filename} - uid:${uid}%`]
                     );
 
-                    if (existing.length > 0) {
-                      console.log("Campaign already exists for this CSV, skipping");
-                    } else {
+                    if (existing.length === 0) {
                       await autoCreateCampaignFromCsv(
                         userId,
                         account.email,
                         csvAttachment,
-                        mail.subject || "Auto Campaign",
+                        parsedMail.subject || "Auto Campaign",
                         fromEmail,
                         uid
                       );
+                    } else {
+                      console.log("Campaign already exists for this CSV, skipping");
                     }
                   }
                 }
