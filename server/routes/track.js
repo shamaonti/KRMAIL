@@ -52,21 +52,17 @@ router.get("/open", async (req, res) => {
       isFirstOpen
     });
 
-    // Update campaign_data - set opened_at on first open, increment counter always
+    // Use the already-read value to avoid zero-date comparisons in MySQL strict mode.
     const [updateResult] = await conn.query(
       `UPDATE campaign_data
-       SET opened_at = CASE 
-                        WHEN opened_at IS NULL OR opened_at = '0000-00-00 00:00:00' 
-                        THEN NOW() 
-                        ELSE opened_at 
-                      END,
+       SET opened_at = ?,
            open_count = open_count + 1,
-           status = CASE 
-                      WHEN status = 'sent' THEN 'opened' 
-                      ELSE status 
+           status = CASE
+                      WHEN status = 'sent' THEN 'opened'
+                      ELSE status
                     END
        WHERE campaign_id = ? AND email = ?`,
-      [cid, email]
+      [isFirstOpen ? new Date() : currentRecord.opened_at, cid, email]
     );
 
     console.log(`✅ Updated campaign_data: ${updateResult.affectedRows} row(s)`);
@@ -143,16 +139,11 @@ router.get("/click", async (req, res) => {
 
     const isFirstClick = rows[0].clicked_at === null || rows[0].clicked_at === '0000-00-00 00:00:00';
 
-    // Update campaign_data
     await conn.query(
       `UPDATE campaign_data
-       SET clicked_at = CASE 
-                         WHEN clicked_at IS NULL OR clicked_at = '0000-00-00 00:00:00' 
-                         THEN NOW() 
-                         ELSE clicked_at 
-                       END
+       SET clicked_at = ?
        WHERE campaign_id = ? AND email = ?`,
-      [cid, email]
+      [isFirstClick ? new Date() : rows[0].clicked_at, cid, email]
     );
 
     // Increment campaign clicked_count ONLY on first click
