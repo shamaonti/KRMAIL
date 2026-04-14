@@ -5,6 +5,10 @@ const db = require("../db");
 const { getLatestEmailAccount } = require("../helpers/emailAccount");
 const { createTransporter } = require("../helpers/mailer");
 const { sign } = require("../helpers/unsubscribeToken");
+const {
+  getISTMysqlDatetimeAfterHours,
+  normalizeToISTMysqlDatetime,
+} = require("../helpers/time");
 
 // helper (SELECT only)
 async function q(sql, params = []) {
@@ -122,20 +126,7 @@ function mergePlaceholders(content, lead, payload = {}, signature = "") {
 }
 
 function parseRunAt(runAt) {
-  if (!runAt) return null;
-  const s = String(runAt).trim();
-  const test = new Date(s.replace(" ", "T"));
-  if (Number.isNaN(test.getTime())) return null;
-  return s;
-}
-
-function getISTDatetimeAfterHours(delayHours) {
-  const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
-  const nowIST = new Date(Date.now() + IST_OFFSET_MS);
-  const futureIST = new Date(nowIST.getTime() + delayHours * 60 * 60 * 1000);
-  const pad = (n) => String(n).padStart(2, "0");
-  return `${futureIST.getUTCFullYear()}-${pad(futureIST.getUTCMonth() + 1)}-${pad(futureIST.getUTCDate())} ` +
-         `${pad(futureIST.getUTCHours())}:${pad(futureIST.getUTCMinutes())}:${pad(futureIST.getUTCSeconds())}`;
+  return normalizeToISTMysqlDatetime(runAt);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -585,7 +576,7 @@ router.post("/:id/send", async (req, res) => {
         try {
           for (const step of followupSteps) {
             const delayHours     = (step.delay_days || 1) * 24;
-            const scheduledAtStr = getISTDatetimeAfterHours(delayHours);
+            const scheduledAtStr = getISTMysqlDatetimeAfterHours(delayHours);
 
             await conn.query(
               `INSERT INTO followup_queue

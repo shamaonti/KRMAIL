@@ -6,12 +6,14 @@ const cron = require("node-cron");
 const db = require("../db");
 const { createTransporter } = require("../helpers/mailer");
 const { sign } = require("../helpers/unsubscribeToken");
+const { getCurrentISTMysqlDatetime } = require("../helpers/time");
 
 const MAX_PER_TICK = 20;
 const DELAY_MS = 300;
 
 // ─── Eligible followup targets fetch karo followup_queue se ──────────────────
 async function fetchFollowupTargets(limit = MAX_PER_TICK) {
+  const nowIST = getCurrentISTMysqlDatetime();
   const [rows] = await db.query(
     `SELECT
        fq.id                    AS fq_id,
@@ -77,13 +79,13 @@ async function fetchFollowupTargets(limit = MAX_PER_TICK) {
           )
 
      WHERE fq.status = 'pending'
-       AND fq.scheduled_at <= NOW()
+       AND fq.scheduled_at <= ?
        AND u.id IS NULL
        AND uea.id IS NOT NULL
 
      ORDER BY fq.scheduled_at ASC, fq.followup_order ASC
      LIMIT ?`,
-    [limit]
+    [nowIST, limit]
   );
 
   // Condition filter
