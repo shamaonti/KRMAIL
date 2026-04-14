@@ -341,7 +341,7 @@ const EmailTemplatesPage = () => {
           .replace(/(<br\s*\/?>\s*){2,}/gi, '<br><br>'),
         template_type: categoryToTemplateType(formData.category),
         is_default: (formData.is_default ?? 0) as 0 | 1,
-        followups: followupSteps.map((s, i) => ({ ...s, followup_order: i + 1 })),
+        followups: followupSteps.map((s, i) => ({ ...s, followup_order: i + 1, content: s.content.replace(/\n/g, '<br>').replace(/(<br\s*\/?>\s*){2,}/gi, '<br><br>') })),
       });
       toast({ title: formData.id ? "Template Updated" : "Template Saved", description: "Saved successfully" });
       await loadTemplates();
