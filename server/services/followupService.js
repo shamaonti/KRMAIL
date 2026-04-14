@@ -2,6 +2,7 @@
 const pool = require("../db");
 const { createTransporter } = require("../helpers/mailer");
 const { sign } = require("../helpers/unsubscribeToken");
+const { getCurrentISTMysqlDatetime } = require("../helpers/time");
 
 class FollowupService {
   constructor() {
@@ -47,7 +48,7 @@ class FollowupService {
   async getPendingFollowups() {
     // ✅ Join campaign_data for lead payload/name (for placeholder merge)
     // ✅ Join email_campaigns for user_id + original_subject
-    // ✅ scheduled_at <= NOW() ensures we only process due follow-ups
+    const nowIST = getCurrentISTMysqlDatetime();
     const [rows] = await pool.execute(`
       SELECT
         fq.*,
@@ -64,9 +65,9 @@ class FollowupService {
       LEFT JOIN campaign_data   cd ON cd.campaign_id = fq.campaign_id
                                    AND LOWER(TRIM(cd.email)) = LOWER(TRIM(fq.email))
       WHERE fq.status      = 'pending'
-        AND fq.scheduled_at <= NOW()
+        AND fq.scheduled_at <= ?
       ORDER BY fq.scheduled_at ASC
-    `);
+    `, [nowIST]);
 
     return rows;
   }
