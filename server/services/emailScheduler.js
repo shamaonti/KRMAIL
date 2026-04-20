@@ -469,7 +469,22 @@ class EmailScheduler {
             return;
           }
 
-          const { lead, account } = item;
+         const { lead, account } = item;
+
+          const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+          if (!emailRegex.test(lead.email.trim())) {
+            await conn.query(
+              `INSERT IGNORE INTO unsubscribes (email, user_id, campaign_id, scope, reason)
+               VALUES (?, ?, ?, 'campaign', 'invalid email')`,
+              [lead.email.trim(), campaign.user_id, campaign.id]
+            );
+            await conn.query(
+              `UPDATE campaign_data SET status = 'bounced' WHERE id = ?`,
+              [lead.id]
+            );
+            console.log(`⚠️ Invalid email skipped: ${lead.email}`);
+            continue;
+          }
           const leadEmailNorm     = this.normalizeEmail(lead.email);
           if (!transporterCache[account.email]) {
             transporterCache[account.email] = createTransporter(account);
@@ -502,16 +517,31 @@ class EmailScheduler {
                 <a href="${unsubUrl}">Unsubscribe</a>
               </p>`;
 
-            await transporter.sendMail({
-              from:    `"${account.from_name || "Campaign"}" <${account.email}>`,
-              to:      lead.email,
-              subject: emailSubject,
-              html:    emailContent,
-              headers: {
-                "List-Unsubscribe":      `<${unsubUrl}>`,
-                "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
-              },
-            });
+            let sendInfo;
+            try {
+              sendInfo = await transporter.sendMail({
+                from:    `"${account.from_name || "Campaign"}" <${account.email}>`,
+                to:      lead.email,
+                subject: emailSubject,
+                html:    emailContent,
+                headers: {
+                  "List-Unsubscribe":      `<${unsubUrl}>`,
+                  "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+                },
+              });
+            } catch (smtpErr) {
+              await conn.query(
+                `INSERT IGNORE INTO unsubscribes (email, user_id, campaign_id, scope, reason)
+                 VALUES (?, ?, ?, 'campaign', 'bounced - domain not found')`,
+                [lead.email.trim(), campaign.user_id, campaign.id]
+              );
+              await conn.query(
+                `UPDATE campaign_data SET status = 'bounced' WHERE id = ?`,
+                [lead.id]
+              );
+              console.log(`⚠️ Bounced (SMTP failed): ${lead.email}`);
+              continue;
+            }
 
             // Mark as sent
             await conn.query(
@@ -584,25 +614,31 @@ await conn.query(
         }
       }
       // ─── End batch loop ───────────────────────────────────────────────
-
-      const finalUnsubCount = await this.getUnsubscribedCount(conn, campaign.id);
+const finalUnsubCount = await this.getUnsubscribedCount(conn, campaign.id);
 const [finalSentResult] = await conn.query(
   `SELECT COUNT(*) as cnt FROM campaign_data WHERE campaign_id = ? AND status = 'sent'`,
   [campaign.id]
 );
 const actualFinalSentCount = Number(finalSentResult[0]?.cnt || 0);
 
+// ✅ Count bounced
+const [bouncedResult] = await conn.query(
+  `SELECT COUNT(*) as cnt FROM campaign_data WHERE campaign_id = ? AND status = 'bounced'`,
+  [campaign.id]
+);
+const finalBouncedCount = Number(bouncedResult[0]?.cnt || 0);
+
 await conn.query(
   `UPDATE email_campaigns
    SET status             = 'sent',
        sent_count         = ?,
        unsubscribed_count = ?,
+       bounced_count      = ?,
        completed_at       = NOW(),
        updated_at         = NOW()
    WHERE id = ?`,
-  [actualFinalSentCount, finalUnsubCount, campaign.id]
+  [actualFinalSentCount, finalUnsubCount, finalBouncedCount, campaign.id]
 );
-
       console.log(`\n🏁 CAMPAIGN COMPLETE!`);
       console.log(`📊 Total Batches:      ${batchNumber}`);
       console.log(`📧 Total Sent:         ${totalSent}`);
