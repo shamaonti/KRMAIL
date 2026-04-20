@@ -26,7 +26,9 @@ interface FollowupStep {
   total: number;
   sent: number;
   pending: number;
-  failed: number;
+ failed: number;
+  scheduled_at?: string;
+  sent_at?: string;
 }
 interface Campaign {
   id: number;
@@ -488,16 +490,38 @@ const fetchFollowupStats = async (campaignId: number) => {
                   className="border rounded-lg p-4 bg-gray-50">
 
                   {/* Followup name + number */}
-                  <div className="flex items-center gap-2 mb-3">
-                    <span className="w-7 h-7 flex items-center justify-center
-                      bg-purple-600 text-white rounded-full text-xs font-bold">
-                      {step.followup_order}
-                    </span>
-                    <p className="text-sm font-semibold">
-                      {step.followup_subject || `Followup #${step.followup_order}`}
-                    </p>
+                 
+<div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <span className="w-7 h-7 flex items-center justify-center
+                        bg-purple-600 text-white rounded-full text-xs font-bold">
+                        {step.followup_order}
+                      </span>
+                      <p className="text-sm font-semibold">
+                        {step.followup_subject || `Followup #${step.followup_order}`}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-4 text-xs">
+                      <div className="flex items-center gap-1">
+                        <Clock className="h-3.5 w-3.5 text-purple-500" />
+                        <span className="text-gray-500">Scheduled At:</span>
+                        <span className="font-medium text-gray-700">
+                          {step.scheduled_at
+                            ? new Date(step.scheduled_at).toLocaleString('en-IN')
+                            : '—'}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <Send className="h-3.5 w-3.5 text-green-500" />
+                        <span className="text-gray-500">Sent At:</span>
+                        <span className="font-medium text-gray-700">
+                          {step.sent_at
+                            ? new Date(step.sent_at).toLocaleString('en-IN')
+                            : '—'}
+                        </span>
+                      </div>
+                    </div>
                   </div>
-
                   {/* Tracking numbers */}
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                     <div className="text-center p-3 bg-purple-50 rounded-lg">

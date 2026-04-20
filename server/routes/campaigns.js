@@ -670,7 +670,9 @@ router.get("/:id/followup-stats", async (req, res) => {
          COUNT(*)                AS total,
          SUM(status = 'sent')    AS sent,
          SUM(status = 'pending') AS pending,
-         SUM(status = 'failed')  AS failed
+        SUM(status = 'failed')  AS failed,
+         MIN(scheduled_at)       AS scheduled_at,
+         MIN(sent_at)            AS sent_at
        FROM followup_queue
        WHERE campaign_id = ?
        GROUP BY followup_order, followup_subject
@@ -686,7 +688,9 @@ router.get("/:id/followup-stats", async (req, res) => {
         total:   Number(r.total   || 0),
         sent:    Number(r.sent    || 0),
         pending: Number(r.pending || 0),
-        failed:  Number(r.failed  || 0),
+      failed:       Number(r.failed  || 0),
+        scheduled_at: toISTString(r.scheduled_at),
+        sent_at:      toISTString(r.sent_at),
       }))
     });
 
