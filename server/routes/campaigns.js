@@ -535,6 +535,27 @@ router.post("/:id/send", async (req, res) => {
         continue;
       }
 
+      // ✅ MX record check
+      const domain = lead.email.trim().split('@')[1];
+      const domainValid = await new Promise((resolve) => {
+        require('dns').resolveMx(domain, (err, addresses) => {
+          resolve(!err && addresses && addresses.length > 0);
+        });
+      });
+      if (!domainValid) {
+        await conn.query(
+          `INSERT IGNORE INTO unsubscribes (email, user_id, campaign_id, scope, reason)
+           VALUES (?, ?, ?, 'campaign', 'bounced - domain not found')`,
+          [lead.email.trim(), userId, campaignId]
+        );
+        await conn.query(
+          `UPDATE campaign_data SET status = 'bounced' WHERE id = ?`,
+          [lead.id]
+        );
+        console.log(`⚠️ Bounced (domain not found): ${lead.email}`);
+        continue;
+      }
+
       const emailAccount = emailAccounts[accountIndex % emailAccounts.length];
       accountIndex++;
       const transporter = createTransporter(emailAccount);

@@ -485,6 +485,27 @@ class EmailScheduler {
             console.log(`⚠️ Invalid email skipped: ${lead.email}`);
             continue;
           }
+          // ✅ MX record check
+          const domain = lead.email.trim().split('@')[1];
+          const domainValid = await new Promise((resolve) => {
+            require('dns').resolveMx(domain, (err, addresses) => {
+              resolve(!err && addresses && addresses.length > 0);
+            });
+          });
+          if (!domainValid) {
+            await conn.query(
+              `INSERT IGNORE INTO unsubscribes (email, user_id, campaign_id, scope, reason)
+               VALUES (?, ?, ?, 'campaign', 'bounced - domain not found')`,
+              [lead.email.trim(), campaign.user_id, campaign.id]
+            );
+            await conn.query(
+              `UPDATE campaign_data SET status = 'bounced' WHERE id = ?`,
+              [lead.id]
+            );
+            console.log(`⚠️ Bounced (domain not found): ${lead.email}`);
+            continue;
+          }
+
           const leadEmailNorm     = this.normalizeEmail(lead.email);
           if (!transporterCache[account.email]) {
             transporterCache[account.email] = createTransporter(account);
